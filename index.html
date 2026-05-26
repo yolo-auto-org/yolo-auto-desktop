@@ -601,7 +601,20 @@
         </div>
 
         <div class="code-block" style="overflow-x:auto;">
-          <button class="copy-btn" onclick="copyCode(this, 'npm install -g @mariozechner/pi-coding-agent')">📋 Copy</button>
+          <button class="copy-btn" data-copy="npm install -g @mariozechner/pi-coding-agent && printf '
+╔══════════════════════════════════╗
+║  🎉 YOLO AUTO INSTALLED!  🎉  ║
+╚══════════════════════════════════╝
+
+👉 NEXT: Get your membership key
+
+   ① Go to yolo-auto.com/signup
+   ② Create an account
+   ③ Copy your API key
+   ④ Paste: export YOLO_API_KEY=your-key
+
+Then type: pi
+'" onclick="copyCode(this)">📋 Copy</button>
           <pre style="white-space:pre-wrap;word-break:break-word;"><span class="prompt">$</span> npm install -g @mariozechner/pi-coding-agent && \
    printf '\n╔══════════════════════════════════╗\n║  🎉 YOLO AUTO INSTALLED!  🎉  ║\n╚══════════════════════════════════╝\n\n👉 NEXT: Get your membership key\n\n   ① Go to yolo-auto.com/signup\n   ② Create an account\n   ③ Copy your API key\n   ④ Paste: export YOLO_API_KEY=your-key\n\nThen type: pi\n'</pre>
         </div>
@@ -903,6 +916,7 @@ document.querySelectorAll('.faq-q').forEach(q => {
 
 // ── Copy Code ─────────────────────────────
 function copyCode(btn, text) {
+  text = text || btn.dataset.copy;
   navigator.clipboard.writeText(text).then(() => {
     btn.textContent = '✅ Copied!';
     btn.classList.add('copied');
