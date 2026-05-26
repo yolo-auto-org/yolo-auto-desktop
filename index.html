@@ -584,64 +584,33 @@
     <div class="step reveal" id="step2">
       <div class="step-num">2</div>
       <div class="step-content">
-        <h4>Check You Have Node.js</h4>
-        <p>YOLO Auto needs a free tool called Node.js. Think of it like the "engine" that makes YOLO Auto run. Let's see if you already have it:</p>
-        <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this, 'node --version')">📋 Copy</button>
-          <pre><span class="prompt">$</span> node --version</pre>
-        </div>
-        <p>Type that into your terminal and hit Enter. If you see a number like <code style="padding:2px 8px;border-radius:6px;background:var(--surface3);color:var(--green);font-size:0.9em;">v20.11.0</code> — great, skip to Step 3!</p>
-        <p>If you see <em>"command not found"</em> or an error, install it below:</p>
+        <h4>One-Click Install + Get Your Membership</h4>
+        <p>Copy this line, paste it into your terminal, and hit Enter. Our script handles everything — it checks for Node.js, installs it if needed, then downloads YOLO Auto. <strong>One click. Done.</strong></p>
 
         <div class="os-specific mac show">
-          <p>Go to <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a>, click the big green <strong>LTS</strong> button, download and run the installer. Then close and reopen your terminal, and type <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">node --version</code> again.</p>
+          <p style="font-size:0.85rem;color:var(--text2);margin-bottom:0.5rem;">Paste in terminal: <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">⌘ Cmd + V</kbd></p>
         </div>
         <div class="os-specific windows">
-          <p>Go to <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a>, click the big green <strong>LTS</strong> button, download and run the installer. Check the box for "Automatically install the necessary tools." Then close and reopen PowerShell, and type <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">node --version</code> again.</p>
+          <p style="font-size:0.85rem;color:var(--text2);margin-bottom:0.5rem;">Paste in PowerShell: <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Ctrl + V</kbd> (or right-click)</p>
         </div>
         <div class="os-specific linux">
-          <div class="code-block"><pre><span class="prompt">$</span> curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-<span class="prompt">$</span> sudo apt-get install -y nodejs</pre></div>
-          <p style="font-size:0.85rem;color:var(--text2);">On other Linux versions, check <a href="https://nodejs.org/en/download/package-manager" style="color:var(--cyan);">nodejs.org</a> for instructions.</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Step 3 -->
-    <div class="step reveal" id="step3">
-      <div class="step-num">3</div>
-      <div class="step-content">
-        <h4>Install YOLO Auto</h4>
-        <p>One line. Copy it, paste it into your terminal, hit Enter. That's it.</p>
-
-        <div class="os-specific mac show">
-          <p style="font-size:0.85rem;color:var(--text2);">Paste in terminal is <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">⌘ Cmd + V</kbd></p>
-        </div>
-        <div class="os-specific windows">
-          <p style="font-size:0.85rem;color:var(--text2);">Paste in PowerShell is <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Ctrl + V</kbd> (or right-click)</p>
-        </div>
-        <div class="os-specific linux">
-          <p style="font-size:0.85rem;color:var(--text2);">Paste in terminal is <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Ctrl + Shift + V</kbd></p>
+          <p style="font-size:0.85rem;color:var(--text2);margin-bottom:0.5rem;">Paste in terminal: <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Ctrl + Shift + V</kbd></p>
         </div>
 
         <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this, 'npm install -g @mariozechner/pi-coding-agent')">📋 Copy</button>
-          <pre><span class="prompt">$</span> npm install -g @mariozechner/pi-coding-agent</pre>
+          <button class="copy-btn" onclick="copyCode(this, 'curl -fsSL https://yolo-auto.com/install | bash')">📋 Copy</button>
+          <pre><span class="prompt">$</span> curl -fsSL https://yolo-auto.com/install | bash</pre>
         </div>
-        <p>Takes about 30 seconds. You'll see some text fly by — that's normal.</p>
+
         <div class="info-box tip">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          <div><strong>What just happened?</strong> npm (which came with Node.js) downloaded YOLO Auto and installed it on your computer. You only do this once — like installing an app from the App Store.</div>
+          <div><strong>What's happening behind the scenes?</strong> The script checks if you have Node.js (and installs it if you don't), then downloads YOLO Auto. Give it about 60 seconds. You'll see some text fly by — that's totally normal.</div>
         </div>
-      </div>
-    </div>
 
-    <!-- Step 4 -->
-    <div class="step reveal" id="step4">
-      <div class="step-num">4</div>
-      <div class="step-content">
-        <h4>Get Your YOLO Auto Membership Key</h4>
-        <p>Think of this like a <strong>gym membership</strong>. One key gives you unlimited access to the whole thing — no credits, no "per-use" fees, no confusing tiers. Just one membership that unlocks everything.</p>
+        <hr style="border-color:var(--border);margin:2rem 0;">
+
+        <h4 style="margin-bottom:0.5rem;">Now grab your membership key</h4>
+        <p>Think of this like a <strong>gym membership</strong>. One key gives you unlimited access — no credits, no per-use fees, no confusing tiers.</p>
 
         <div class="membership-card">
           <h4>🏋️ YOLO Auto Membership</h4>
@@ -656,32 +625,31 @@
           </ul>
         </div>
 
-        <h3 style="margin-top:2rem;">How to get your membership key:</h3>
         <ol style="margin-left:1.25rem;color:var(--text2);line-height:2.2;font-size:0.95rem;">
           <li>Go to <strong><a href="#" style="color:var(--cyan);">yolo-auto.com/signup</a></strong> and create an account</li>
           <li>Choose your plan (starts at $5 — less than a sandwich)</li>
           <li>You'll get a <strong>YOLO API Key</strong> — it looks like <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">ya-sk-xxxxxxxxxxxxx</code></li>
-          <li>Copy that key and tell your computer about it:</li>
+          <li>Copy that key and paste this into your terminal:</li>
         </ol>
 
         <div class="os-specific mac show">
           <div class="code-block">
             <button class="copy-btn" onclick="copyCode(this, 'export YOLO_API_KEY=ya-sk-your-key-here')">📋 Copy</button>
-            <pre><span class="comment"># Type this, replacing the last part with your real key:</span>
+            <pre><span class="comment"># Replace the last part with your real key:</span>
 <span class="prompt">$</span> export YOLO_API_KEY=<span class="highlight">ya-sk-your-key-here</span></pre>
           </div>
         </div>
         <div class="os-specific windows">
           <div class="code-block">
             <button class="copy-btn" onclick="copyCode(this, '$env:YOLO_API_KEY=\"ya-sk-your-key-here\"')">📋 Copy</button>
-            <pre><span class="comment"># Type this, replacing the last part with your real key:</span>
+            <pre><span class="comment"># Replace the last part with your real key:</span>
 <span class="prompt">$</span> $env:YOLO_API_KEY="<span class="highlight">ya-sk-your-key-here</span>"</pre>
           </div>
         </div>
         <div class="os-specific linux">
           <div class="code-block">
             <button class="copy-btn" onclick="copyCode(this, 'export YOLO_API_KEY=ya-sk-your-key-here')">📋 Copy</button>
-            <pre><span class="comment"># Type this, replacing the last part with your real key:</span>
+            <pre><span class="comment"># Replace the last part with your real key:</span>
 <span class="prompt">$</span> export YOLO_API_KEY=<span class="highlight">ya-sk-your-key-here</span></pre>
           </div>
         </div>
@@ -690,25 +658,26 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           <div><strong>Keep your key private!</strong> Like a gym membership card, don't share it. The <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">export</code> command remembers it for your current terminal session. For a permanent setup, add the export line to your <code>~/.bashrc</code> or <code>~/.zshrc</code> file.</div>
         </div>
-
       </div>
     </div>
 
-    <!-- Step 5 -->
-    <div class="step reveal" id="step5">
-      <div class="step-num">5</div>
+    <!-- Step 3 -->
+    <div class="step reveal" id="step3">
+      <div class="step-num">3</div>
       <div class="step-content">
-        <h4>Launch and Talk to Your Assistant 🪄</h4>
-        <p>Pick a folder where you want the assistant to work (or just use your home folder), then launch it:</p>
+        <h4>Start Using Your Assistant 🪄</h4>
+        <p>Pick any folder on your computer, launch YOLO Auto, and <strong>just talk to it</strong>. It does everything — you just watch.</p>
+
         <div class="code-block">
           <button class="copy-btn" onclick="copyCode(this, 'cd ~/Desktop\npi')">📋 Copy</button>
-          <pre><span class="comment"># Go to your Desktop (or any folder you want):</span>
+          <pre><span class="comment"># Go to your Desktop (or wherever you want the assistant to work):</span>
 <span class="prompt">$</span> <span class="cmd">cd</span> ~/Desktop
 
-<span class="comment"># Start YOLO Auto:</span>
+<span class="comment"># Launch YOLO Auto:</span>
 <span class="prompt">$</span> pi</pre>
         </div>
-        <p>You'll see something like this. Now just <strong>talk to it in plain English!</strong></p>
+
+        <p>You'll see a screen like this. The blinking cursor means it's ready for you:</p>
         <div class="terminal">
           <div class="terminal-bar">
             <div class="terminal-dots"><span class="terminal-dot r"></span><span class="terminal-dot y"></span><span class="terminal-dot g"></span></div>
@@ -717,16 +686,49 @@
           <div class="terminal-body">
             <div class="line" style="color:var(--green);">✓ YOLO Auto ready</div>
             <div class="line" style="color:var(--text2);">session: happy-dolphin</div>
-            <div class="line" style="margin-top:0.5rem;color:var(--text2);">Type /hotkeys for keyboard shortcuts.</div>
+            <div class="line" style="color:var(--text2);">Type /hotkeys for keyboard shortcuts.</div>
             <div class="line" style="margin-top:0.75rem;"><span style="color:#a78bfa;font-weight:600;">you</span> <span class="blink">▊</span></div>
           </div>
         </div>
-        <p style="margin-top:1rem;"><strong>Now try something! Type a request and hit Enter:</strong></p>
-        <div class="code-block">
-          <pre><span class="comment">→ "organize my desktop — put screenshots in a folder"</span>
-<span class="comment">→ "create a simple website for my cat with photos"</span>
-<span class="comment">→ "rename all files in this folder to lowercase"</span>
-<span class="comment">→ "write me a workout plan and save it as a PDF"</span></pre>
+
+        <p style="margin-top:1.25rem;"><strong>Now just type what you want, in plain English. Here are some ideas to get you going:</strong></p>
+
+        <div class="features" style="margin-top:1rem;">
+          <div class="feature">
+            <div class="feature-icon">📁</div>
+            <h4>Organize your stuff</h4>
+            <p style="font-size:0.85rem;">"Put all screenshots on my desktop into a folder called Screenshots"</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">🌐</div>
+            <h4>Build something</h4>
+            <p style="font-size:0.85rem;">"Make me a simple website to show off my vacation photos"</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">📝</div>
+            <h4>Write & create</h4>
+            <p style="font-size:0.85rem;">"Write a cover letter for a marketing job and save it as a PDF"</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">🔍</div>
+            <h4>Find & fix things</h4>
+            <p style="font-size:0.85rem;">"Find all files I haven't touched in 6 months and list them"</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">🖼️</div>
+            <h4>Batch tasks</h4>
+            <p style="font-size:0.85rem;">"Rename all the photos in this folder to include the date taken"</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">📊</div>
+            <h4>Crunch data</h4>
+            <p style="font-size:0.85rem;">"Take this spreadsheet of expenses and create a monthly summary"</p>
+          </div>
+        </div>
+
+        <div class="info-box tip" style="margin-top:1.5rem;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <div><strong>That's really it.</strong> No copy-pasting instructions from ChatGPT. No watching YouTube tutorials. Your assistant just does the thing while you watch. If it has a question, it'll ask. You stay in control the whole time.</div>
         </div>
       </div>
     </div>
