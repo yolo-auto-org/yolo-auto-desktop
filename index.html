@@ -588,9 +588,8 @@
     <div class="step reveal" id="step2">
       <div class="step-num">2</div>
       <div class="step-content">
-        <h4>Install + Get Your Membership</h4>
-
-        <p style="font-weight:600;color:var(--text);">First — let's check if your computer is ready:</p>
+        <h4>One Line — Installs Everything &amp; Walks You Through Setup</h4>
+        <p>Copy this <strong>one command</strong>, paste it into your terminal, and hit Enter. It installs YOLO Auto, then tells you exactly what to do next — account creation, API key, everything. <strong>One paste, fully guided.</strong></p>
 
         <div class="os-specific mac show">
           <p style="font-size:0.85rem;color:var(--text2);margin-bottom:0.5rem;">Paste in terminal: <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">⌘ Cmd + V</kbd></p>
@@ -602,24 +601,18 @@
           <p style="font-size:0.85rem;color:var(--text2);margin-bottom:0.5rem;">Paste in terminal: <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Ctrl + Shift + V</kbd></p>
         </div>
 
-        <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this, 'node --version')">📋 Copy</button>
-          <pre><span class="prompt">$</span> node --version</pre>
-        </div>
-
-        <p style="margin-top:0.5rem;">If you see a number like <code style="padding:2px 8px;border-radius:6px;background:var(--surface3);color:var(--green);font-size:0.9em;">v20.11.0</code> → great, move on!</p>
-        <p>If you see <em>"command not found"</em> → go to <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a>, click the big green <strong>LTS</strong> button, run the installer. Takes 2 minutes. Then close &amp; reopen your terminal and come back.</p>
-
-        <hr style="border-color:var(--border);margin:2rem 0;">
-
-        <p style="font-weight:600;color:var(--text);">Now — install YOLO Auto:</p>
-
-        <div class="code-block">
+        <div class="code-block" style="overflow-x:auto;">
           <button class="copy-btn" onclick="copyCode(this, 'npm install -g @mariozechner/pi-coding-agent')">📋 Copy</button>
-          <pre><span class="prompt">$</span> npm install -g @mariozechner/pi-coding-agent</pre>
+          <pre style="white-space:pre-wrap;word-break:break-word;"><span class="prompt">$</span> npm install -g @mariozechner/pi-coding-agent && \
+   printf '\n╔══════════════════════════════════╗\n║  🎉 YOLO AUTO INSTALLED!  🎉  ║\n╚══════════════════════════════════╝\n\n👉 NEXT: Get your membership key\n\n   ① Go to yolo-auto.com/signup\n   ② Create an account\n   ③ Copy your API key\n   ④ Paste: export YOLO_API_KEY=your-key\n\nThen type: pi\n'</pre>
         </div>
 
-        <p style="font-weight:600;color:var(--text);margin-top:1.5rem;">After install, here's what to do next — follow these steps in your terminal:</p>
+        <div class="info-box tip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <div><strong>Don't have Node.js?</strong> If the command says "command not found," grab it free at <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a> (click the big green <strong>LTS</strong> button, takes 2 minutes). Then close &amp; reopen your terminal and paste the command above again.</div>
+        </div>
+
+        <p style="font-weight:600;color:var(--text);margin-top:1.5rem;">Here's what you'll see in your terminal after it runs:</p>
 
         <div class="terminal">
           <div class="terminal-bar">
@@ -633,13 +626,12 @@
             <div class="line" style="margin-top:0.75rem;text-align:center;">╔══════════════════════════════════╗</div>
             <div class="line" style="text-align:center;">║  <span style="color:var(--green);">🎉 YOLO AUTO INSTALLED! 🎉</span>  ║</div>
             <div class="line" style="text-align:center;">╚══════════════════════════════════╝</div>
-            <div class="line" style="margin-top:0.5rem;color:var(--accent2);">👉 NEXT STEP: Get your membership key</div>
-            <div class="line" style="color:var(--text2);">   ①  Go to <span style="color:var(--cyan);">yolo-auto.com/signup</span></div>
-            <div class="line" style="color:var(--text2);">   ②  Create an account</div>
-            <div class="line" style="color:var(--text2);">   ③  Copy your API key</div>
-            <div class="line" style="color:var(--text2);">   ④  Paste this into your terminal &amp; hit Enter:</div>
-            <div class="line" style="color:var(--accent2);padding-left:2rem;">export YOLO_API_KEY=<span style="color:var(--text2);">your-key-here</span></div>
-            <div class="line" style="margin-top:0.5rem;color:var(--green);">✅  Done! Now type <span style="color:var(--cyan);">pi</span> to launch →</div>
+            <div class="line" style="margin-top:0.5rem;color:var(--accent2);">👉 NEXT: Get your membership key</div>
+            <div class="line" style="color:var(--text);">   ①  Go to <span style="color:var(--cyan);">yolo-auto.com/signup</span></div>
+            <div class="line" style="color:var(--text);">   ②  Create an account</div>
+            <div class="line" style="color:var(--text);">   ③  Copy your API key</div>
+            <div class="line" style="color:var(--text);">   ④  Paste: <span style="color:var(--accent2);">export YOLO_API_KEY=<span style="color:var(--text2);">your-key-here</span></span></div>
+            <div class="line" style="margin-top:0.5rem;color:var(--green);">✅  Then type <span style="color:var(--cyan);">pi</span> to launch →</div>
           </div>
         </div>
 
