@@ -584,8 +584,9 @@
     <div class="step reveal" id="step2">
       <div class="step-num">2</div>
       <div class="step-content">
-        <h4>One Command — Install + Sign Up</h4>
-        <p>Copy this <strong>one line</strong>, paste it into your terminal, and hit Enter.</p>
+        <h4>Install + Get Your Membership</h4>
+
+        <p style="font-weight:600;color:var(--text);">First — let's check if your computer is ready:</p>
 
         <div class="os-specific mac show">
           <p style="font-size:0.85rem;color:var(--text2);margin-bottom:0.5rem;">Paste in terminal: <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">⌘ Cmd + V</kbd></p>
@@ -598,16 +599,23 @@
         </div>
 
         <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this, 'node --version')">📋 Copy</button>
+          <pre><span class="prompt">$</span> node --version</pre>
+        </div>
+
+        <p style="margin-top:0.5rem;">If you see a number like <code style="padding:2px 8px;border-radius:6px;background:var(--surface3);color:var(--green);font-size:0.9em;">v20.11.0</code> → great, move on!</p>
+        <p>If you see <em>"command not found"</em> → go to <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a>, click the big green <strong>LTS</strong> button, run the installer. Takes 2 minutes. Then close &amp; reopen your terminal and come back.</p>
+
+        <hr style="border-color:var(--border);margin:2rem 0;">
+
+        <p style="font-weight:600;color:var(--text);">Now — install YOLO Auto:</p>
+
+        <div class="code-block">
           <button class="copy-btn" onclick="copyCode(this, 'npm install -g @mariozechner/pi-coding-agent')">📋 Copy</button>
           <pre><span class="prompt">$</span> npm install -g @mariozechner/pi-coding-agent</pre>
         </div>
 
-        <div class="info-box tip">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          <div><strong>Prerequisite:</strong> You need Node.js installed. Don't have it? Grab it free at <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a> (click the big green LTS button, takes 2 minutes). Then come back and paste the line above.</div>
-        </div>
-
-        <p style="font-weight:600;color:var(--text);margin-top:1.5rem;">After install, here's what you do next — all right in the terminal:</p>
+        <p style="font-weight:600;color:var(--text);margin-top:1.5rem;">After install, here's what to do next — follow these steps in your terminal:</p>
 
         <div class="terminal">
           <div class="terminal-bar">
