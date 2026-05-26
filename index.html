@@ -585,7 +585,7 @@
       <div class="step-num">2</div>
       <div class="step-content">
         <h4>One Command — Installs Everything &amp; Sets You Up</h4>
-        <p>Copy this <strong>one line</strong>, paste it into your terminal, and hit Enter. It installs YOLO Auto in about 30 seconds. <strong>One paste. Done.</strong></p>
+        <p>Copy this <strong>ONE line</strong>, paste it into your terminal, and hit Enter. It will install YOLO Auto, then <strong>walk you through everything else</strong> right in the terminal. You don't need to read ahead — the terminal becomes your guide.</p>
 
         <div class="os-specific mac show">
           <p style="font-size:0.85rem;color:var(--text2);margin-bottom:0.5rem;">Paste in terminal: <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">⌘ Cmd + V</kbd></p>
@@ -598,65 +598,43 @@
         </div>
 
         <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this, 'npm install -g @mariozechner/pi-coding-agent')">📋 Copy</button>
-          <pre><span class="prompt">$</span> npm install -g @mariozechner/pi-coding-agent</pre>
+          <button class="copy-btn" onclick="copyCode(this, `npm install -g @mariozechner/pi-coding-agent && printf '\\n╔══════════════════════════════════╗\\n║  🎉 YOLO AUTO INSTALLED!  🎉  ║\\n╚══════════════════════════════════╝\\n\\n👉  NEXT: Get your membership key\\n\\n    1. Open this in your browser:\\n       yolo-auto.com/signup\\n\\n    2. Create an account\\n    3. Copy your API key\\n    4. Paste this line & hit Enter:\\n       export YOLO_API_KEY=YOUR-KEY\\n\\nThen run: pi\\n\\nThats it! 🚀\\n'`)">📋 Copy</button>
+          <pre>npm install -g @mariozechner/pi-coding-agent && printf '\n╔══════════════════════════════════╗\n║  🎉 YOLO AUTO INSTALLED!  🎉  ║\n╚══════════════════════════════════╝\n\n👉  NEXT: Get your membership key\n\n    1. Open this in your browser:\n       yolo-auto.com/signup\n\n    2. Create an account\n    3. Copy your API key\n    4. Paste this line & hit Enter:\n       export YOLO_API_KEY=YOUR-KEY\n\nThen run: pi\n\nThats it! 🚀\n'</pre>
         </div>
 
-        <div class="info-box tip">
+        <p style="font-weight:600;color:var(--text);margin-top:1.5rem;">Here's what your terminal will look like after it finishes:</p>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <div class="terminal-dots"><span class="terminal-dot r"></span><span class="terminal-dot y"></span><span class="terminal-dot g"></span></div>
+            <div class="terminal-tab">terminal</div>
+          </div>
+          <div class="terminal-body">
+            <div class="line" style="color:var(--text2);">... installing ...</div>
+            <div class="line" style="color:var(--text2);">+ @mariozechner/pi-coding-agent</div>
+            <div class="line" style="color:var(--text2);">added 247 packages in 28s</div>
+            <div class="line" style="margin-top:0.75rem;color:var(--green);text-align:center;">╔══════════════════════════════════╗</div>
+            <div class="line" style="color:var(--green);text-align:center;">║  🎉 YOLO AUTO INSTALLED!  🎉  ║</div>
+            <div class="line" style="color:var(--green);text-align:center;">╚══════════════════════════════════╝</div>
+            <div class="line" style="margin-top:0.5rem;color:var(--accent2);">👉  NEXT: Get your membership key</div>
+            <div class="line" style="color:var(--text);">    1. Open this in your browser:</div>
+            <div class="line" style="color:var(--cyan);">       yolo-auto.com/signup</div>
+            <div class="line" style="color:var(--text);">    2. Create an account</div>
+            <div class="line" style="color:var(--text);">    3. Copy your API key</div>
+            <div class="line" style="color:var(--text);">    4. Paste this line &amp; hit Enter:</div>
+            <div class="line" style="color:var(--accent2);">       export YOLO_API_KEY=<span class="blink">█</span></div>
+            <div class="line" style="margin-top:0.5rem;color:var(--text);">    Then run: <span style="color:var(--cyan);">pi</span></div>
+            <div class="line" style="color:var(--green);">    Thats it! 🚀</div>
+          </div>
+        </div>
+
+        <div class="info-box tip" style="margin-top:1rem;">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          <div><strong>Prerequisite:</strong> You need Node.js installed. If you don't have it, grab it free at <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a> (click the big green LTS button). The installer takes 2 minutes. Then come back and paste the line above.</div>
-        </div>
-
-        <hr style="border-color:var(--border);margin:2rem 0;">
-
-        <h4 style="margin-bottom:0.5rem;">Next — grab your membership key</h4>
-        <p>Think of this like a <strong>gym membership</strong>. One key gives you unlimited access — no credits, no per-use fees, no confusing tiers.</p>
-
-        <div class="membership-card">
-          <h4>🏋️ YOLO Auto Membership</h4>
-          <div class="price">One Key to Rule Them All</div>
-          <ul class="perks">
-            <li>Unlimited AI assistant sessions</li>
-            <li>Works on any computer, any project</li>
-            <li>Organize files, build websites, write docs</li>
-            <li>No per-task fees or usage limits</li>
-            <li>Cancel anytime</li>
-            <li>First $5 of usage free</li>
-          </ul>
-        </div>
-
-        <ol style="margin-left:1.25rem;color:var(--text2);line-height:2.2;font-size:0.95rem;">
-          <li>Go to <strong><a href="#" style="color:var(--cyan);">yolo-auto.com/signup</a></strong> and create your account</li>
-          <li>Choose your plan (starts at $5 — less than a sandwich)</li>
-          <li>Copy your <strong>YOLO API Key</strong> — it looks like <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">ya-sk-xxxxxxxxxxxxx</code></li>
-          <li>Come back to your terminal and paste this line — just add your key at the end:</li>
-        </ol>
-
-        <div class="os-specific mac show">
-          <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'export YOLO_API_KEY=your-key-here')">📋 Copy</button>
-            <pre><span class="comment"># Type this, replacing the last part with your real key:</span>
-<span class="prompt">$</span> export YOLO_API_KEY=<span class="highlight">ya-sk-your-key-here</span></pre>
-          </div>
-        </div>
-        <div class="os-specific windows">
-          <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, '$env:YOLO_API_KEY="your-key-here"')">📋 Copy</button>
-            <pre><span class="comment"># Type this, replacing the last part with your real key:</span>
-<span class="prompt">$</span> $env:YOLO_API_KEY="<span class="highlight">ya-sk-your-key-here</span>"</pre>
-          </div>
-        </div>
-        <div class="os-specific linux">
-          <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'export YOLO_API_KEY=your-key-here')">📋 Copy</button>
-            <pre><span class="comment"># Type this, replacing the last part with your real key:</span>
-<span class="prompt">$</span> export YOLO_API_KEY=<span class="highlight">ya-sk-your-key-here</span></pre>
-          </div>
+          <div><strong>Prerequisite:</strong> You need Node.js installed first. Don't have it? Grab it free at <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a> (click the big green LTS button, takes 2 minutes). Then paste the command above.</div>
         </div>
 
         <div class="info-box warn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          <div><strong>Keep your key private!</strong> Like a gym membership card, don't share it. The <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">export</code> command remembers it for your current terminal session. Add it to your <code>~/.bashrc</code> or <code>~/.zshrc</code> file to make it permanent.</div>
+          <div><strong>Keep your key private!</strong> Like a gym membership card, don't share it. Add the export line to your <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">~/.bashrc</code> or <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">~/.zshrc</code> file to make it permanent.</div>
         </div>
       </div>
     </div>
