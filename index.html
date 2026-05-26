@@ -584,8 +584,8 @@
     <div class="step reveal" id="step2">
       <div class="step-num">2</div>
       <div class="step-content">
-        <h4>One-Click Install + Get Your Membership</h4>
-        <p>Copy this line, paste it into your terminal, and hit Enter. Our script handles everything — it checks for Node.js, installs it if needed, then downloads YOLO Auto. <strong>One click. Done.</strong></p>
+        <h4>One Command — Installs Everything &amp; Sets You Up</h4>
+        <p>Copy this <strong>one line</strong>, paste it into your terminal, and hit Enter. The script will install YOLO Auto, then automatically open your browser so you can create your membership. <strong>Everything in one go.</strong></p>
 
         <div class="os-specific mac show">
           <p style="font-size:0.85rem;color:var(--text2);margin-bottom:0.5rem;">Paste in terminal: <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">⌘ Cmd + V</kbd></p>
@@ -602,14 +602,29 @@
           <pre><span class="prompt">$</span> curl -fsSL https://yolo-auto.com/install | bash</pre>
         </div>
 
-        <div class="info-box tip">
+        <p style="font-weight:600;color:var(--text);">Here's exactly what will happen:</p>
+        <div class="terminal" style="margin-top:0.5rem;">
+          <div class="terminal-bar">
+            <div class="terminal-dots"><span class="terminal-dot r"></span><span class="terminal-dot y"></span><span class="terminal-dot g"></span></div>
+            <div class="terminal-tab">terminal</div>
+          </div>
+          <div class="terminal-body">
+            <div class="line" style="color:var(--text2);">→ Checking for Node.js… ✓ found v20.11.0</div>
+            <div class="line" style="color:var(--text2);">→ Installing YOLO Auto… ✓ done!</div>
+            <div class="line" style="color:var(--green);margin-top:0.5rem;">✅ Installed! Opening yolo-auto.com/signup in your browser…</div>
+            <div class="line" style="color:var(--text2);margin-top:0.5rem;">→ When you have your key, paste this line back here:</div>
+            <div class="line" style="color:var(--accent2);">   export YOLO_API_KEY=<span style="color:var(--text2);">◀ paste your key here</span></div>
+          </div>
+        </div>
+
+        <div class="info-box tip" style="margin-top:1rem;">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          <div><strong>What's happening behind the scenes?</strong> The script checks if you have Node.js (and installs it if you don't), then downloads YOLO Auto. Give it about 60 seconds. You'll see some text fly by — that's totally normal.</div>
+          <div><strong>What the script is doing:</strong> it checks for Node.js (installs it if needed), downloads YOLO Auto, then opens yolo-auto.com/signup in your browser. Give it about 60 seconds. When it's done, your browser will pop open automatically.</div>
         </div>
 
         <hr style="border-color:var(--border);margin:2rem 0;">
 
-        <h4 style="margin-bottom:0.5rem;">Now grab your membership key</h4>
+        <h4 style="margin-bottom:0.5rem;">When your browser opens — grab your membership key</h4>
         <p>Think of this like a <strong>gym membership</strong>. One key gives you unlimited access — no credits, no per-use fees, no confusing tiers.</p>
 
         <div class="membership-card">
@@ -626,37 +641,37 @@
         </div>
 
         <ol style="margin-left:1.25rem;color:var(--text2);line-height:2.2;font-size:0.95rem;">
-          <li>Go to <strong><a href="#" style="color:var(--cyan);">yolo-auto.com/signup</a></strong> and create an account</li>
+          <li>Sign up at <strong>yolo-auto.com/signup</strong> (already open in your browser!)</li>
           <li>Choose your plan (starts at $5 — less than a sandwich)</li>
-          <li>You'll get a <strong>YOLO API Key</strong> — it looks like <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">ya-sk-xxxxxxxxxxxxx</code></li>
-          <li>Copy that key and paste this into your terminal:</li>
+          <li>Copy your <strong>YOLO API Key</strong> — it looks like <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">ya-sk-xxxxxxxxxxxxx</code></li>
+          <li>Go back to your terminal — the script already printed the line for you. Just paste your key at the end:</li>
         </ol>
 
         <div class="os-specific mac show">
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'export YOLO_API_KEY=ya-sk-your-key-here')">📋 Copy</button>
-            <pre><span class="comment"># Replace the last part with your real key:</span>
-<span class="prompt">$</span> export YOLO_API_KEY=<span class="highlight">ya-sk-your-key-here</span></pre>
+            <button class="copy-btn" onclick="copyCode(this, 'export YOLO_API_KEY=')">📋 Copy</button>
+            <pre><span class="comment"># Your terminal already shows this line waiting:</span>
+<span class="prompt">$</span> export YOLO_API_KEY=<span style="color:var(--text2);">◀ paste your key, then hit Enter</span></pre>
           </div>
         </div>
         <div class="os-specific windows">
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, '$env:YOLO_API_KEY=\"ya-sk-your-key-here\"')">📋 Copy</button>
-            <pre><span class="comment"># Replace the last part with your real key:</span>
-<span class="prompt">$</span> $env:YOLO_API_KEY="<span class="highlight">ya-sk-your-key-here</span>"</pre>
+            <button class="copy-btn" onclick="copyCode(this, '$env:YOLO_API_KEY=')">📋 Copy</button>
+            <pre><span class="comment"># Your terminal already shows this line waiting:</span>
+<span class="prompt">$</span> $env:YOLO_API_KEY=<span style="color:var(--text2);">◀ paste your key, then hit Enter</span></pre>
           </div>
         </div>
         <div class="os-specific linux">
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'export YOLO_API_KEY=ya-sk-your-key-here')">📋 Copy</button>
-            <pre><span class="comment"># Replace the last part with your real key:</span>
-<span class="prompt">$</span> export YOLO_API_KEY=<span class="highlight">ya-sk-your-key-here</span></pre>
+            <button class="copy-btn" onclick="copyCode(this, 'export YOLO_API_KEY=')">📋 Copy</button>
+            <pre><span class="comment"># Your terminal already shows this line waiting:</span>
+<span class="prompt">$</span> export YOLO_API_KEY=<span style="color:var(--text2);">◀ paste your key, then hit Enter</span></pre>
           </div>
         </div>
 
         <div class="info-box warn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          <div><strong>Keep your key private!</strong> Like a gym membership card, don't share it. The <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">export</code> command remembers it for your current terminal session. For a permanent setup, add the export line to your <code>~/.bashrc</code> or <code>~/.zshrc</code> file.</div>
+          <div><strong>Keep your key private!</strong> Like a gym membership card, don't share it. The <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">export</code> command remembers it for your current terminal session. Add it to your <code>~/.bashrc</code> or <code>~/.zshrc</code> file to make it permanent.</div>
         </div>
       </div>
     </div>
