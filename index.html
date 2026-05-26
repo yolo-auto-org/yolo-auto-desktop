@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>YOLO Auto — 0 to Hero: AI Coding Agent Quick Start</title>
+<title>YOLO Auto — Your Personal AI Assistant</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&display=swap');
 
@@ -65,12 +65,13 @@
   @keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
 
   .hero h1 {
-    font-size: clamp(2.8rem, 7vw, 5.5rem);
+    font-size: clamp(2.4rem, 6vw, 4.8rem);
     font-weight: 800;
-    line-height: 1.1;
+    line-height: 1.15;
     letter-spacing: -0.03em;
     margin-bottom: 1rem;
     animation: fadeInUp 0.6s ease 0.1s both;
+    max-width: 800px;
   }
   .hero h1 .gradient {
     background: linear-gradient(135deg, var(--accent2), var(--cyan), var(--pink));
@@ -79,7 +80,7 @@
   }
   .hero p.sub {
     font-size: 1.2rem; color: var(--text2);
-    max-width: 600px;
+    max-width: 620px;
     margin-bottom: 2.5rem;
     animation: fadeInUp 0.6s ease 0.2s both;
   }
@@ -125,11 +126,51 @@
   .hero-scroll svg { width:24px; height:24px; color: var(--text2); }
   @keyframes bounce { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-10px); } }
 
+  /* ── OS Picker (Global) ──────────────── */
+  .os-picker-wrap {
+    max-width: 900px; margin: 0 auto;
+    padding: 3rem 2rem 0;
+  }
+  .os-picker-label {
+    font-weight: 600; font-size: 0.9rem;
+    color: var(--text2); text-transform: uppercase;
+    letter-spacing: 0.05em; margin-bottom: 0.75rem;
+    text-align: center;
+  }
+  .os-picker {
+    display: flex; gap: 1rem; justify-content: center;
+    margin-bottom: 3rem;
+  }
+  .os-card {
+    flex: 1; max-width: 220px;
+    padding: 1.5rem 1rem;
+    border-radius: 16px;
+    border: 2px solid var(--border);
+    background: var(--surface);
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    user-select: none;
+  }
+  .os-card:hover { border-color: var(--text2); transform: translateY(-2px); }
+  .os-card.active {
+    border-color: var(--accent);
+    background: var(--surface2);
+    box-shadow: 0 0 25px var(--accent-glow);
+  }
+  .os-card .os-icon { font-size: 2.5rem; margin-bottom: 0.5rem; display:block; }
+  .os-card .os-name { font-weight: 600; font-size: 1rem; }
+  .os-card .os-check {
+    display: none; color: var(--accent2); font-size: 0.85rem;
+    margin-top: 0.25rem;
+  }
+  .os-card.active .os-check { display: block; }
+
   /* ── Sections ─────────────────────────── */
   .section {
     max-width: 900px;
     margin: 0 auto;
-    padding: 5rem 2rem;
+    padding: 3rem 2rem;
   }
   .section h2 {
     font-size: 2rem; font-weight: 700;
@@ -189,6 +230,7 @@
   .code-block .comment { color: #6b7280; }
   .code-block .cmd { color: var(--cyan); }
   .code-block .output { color: var(--text2); }
+  .code-block .highlight { background: rgba(124,58,237,0.15); padding:0 2px; border-radius:3px; color: var(--accent2); }
   .copy-btn {
     position: absolute; top: 0.75rem; right: 0.75rem;
     padding: 0.35rem 0.75rem;
@@ -203,25 +245,6 @@
   }
   .copy-btn:hover { background: var(--surface3); color: var(--text); border-color: var(--text2); }
   .copy-btn.copied { background: var(--green); color: #fff; border-color: var(--green); }
-
-  /* ── OS Tabs ──────────────────────────── */
-  .os-tabs { display: flex; gap: 0; margin-bottom: 0; }
-  .os-tab {
-    padding: 0.65rem 1.25rem;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text2);
-    cursor: pointer;
-    font-weight: 500; font-size: 0.9rem;
-    transition: all 0.15s;
-    flex: 1;
-    text-align: center;
-  }
-  .os-tab:first-child { border-radius: 12px 0 0 12px; }
-  .os-tab:last-child { border-radius: 0 12px 12px 0; }
-  .os-tab.active { background: var(--surface3); color: var(--text); border-color: var(--accent); }
-  .os-panel { display: none; border: 1px solid var(--border); border-top: none; border-radius: 0 0 12px 12px; background: var(--surface); padding: 1.5rem; }
-  .os-panel.active { display: block; }
 
   /* ── Terminal Sim ─────────────────────── */
   .terminal {
@@ -249,7 +272,6 @@
   }
   .terminal-body { padding: 1.25rem 1.5rem; overflow-x: auto; }
   .terminal-body .line { font-family: 'SF Mono', monospace; font-size: 0.88rem; line-height: 1.8; }
-  .terminal-body .dollar { color: var(--green); }
   .terminal-body .blink { animation: blink 1s infinite; color: var(--text2); }
   @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0;} }
 
@@ -314,6 +336,64 @@
   }
   .faq-item.open .faq-a { display: block; }
 
+  /* ── Gym Membership Card ──────────────── */
+  .membership-card {
+    background: linear-gradient(135deg, #1a1030, #1e1840);
+    border: 2px solid var(--accent);
+    border-radius: 20px;
+    padding: 2rem;
+    margin: 1.5rem 0;
+    position: relative;
+    overflow: hidden;
+  }
+  .membership-card::before {
+    content:''; position:absolute;
+    top: -50%; right: -20%;
+    width: 300px; height: 300px;
+    background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .membership-card h4 { font-size: 1.3rem; margin-bottom: 0.25rem; position:relative; }
+  .membership-card .price {
+    font-size: 3rem; font-weight: 800;
+    background: linear-gradient(135deg, var(--accent2), var(--cyan));
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+    background-clip: text;
+    margin: 0.75rem 0;
+    position:relative;
+  }
+  .membership-card .perks {
+    list-style: none; position:relative;
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+  .membership-card .perks li { color: var(--text2); font-size: 0.9rem; }
+  .membership-card .perks li::before { content: '✓ '; color: var(--green); }
+
+  /* ── OS-specific display ──────────────── */
+  .os-specific { display: none; }
+  .os-specific.show { display: block; }
+
+  /* ── Before/after comparison ──────────── */
+  .comparison {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 1.5rem; margin: 2rem 0;
+  }
+  .comparison-col {
+    padding: 1.5rem;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+  }
+  .comparison-col.old {
+    background: rgba(239,68,68,0.05);
+    border-color: rgba(239,68,68,0.2);
+  }
+  .comparison-col.new {
+    background: rgba(16,185,129,0.05);
+    border-color: rgba(16,185,129,0.2);
+  }
+  .comparison-col h4 { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
+
   /* ── Footer ───────────────────────────── */
   footer {
     text-align: center;
@@ -325,6 +405,13 @@
   footer a { color: var(--accent2); text-decoration: none; }
   footer a:hover { text-decoration: underline; }
 
+  /* ── Cmd Table ────────────────────────── */
+  .cmd-table { width:100%; border-collapse:collapse; font-size:0.95rem; }
+  .cmd-table td { padding:0.85rem 1rem; border-bottom:1px solid var(--border); }
+  .cmd-table tr:hover { background: var(--surface); }
+  .cmd-table td:first-child { font-family:'SF Mono',monospace; color: var(--cyan); white-space:nowrap; font-weight:500; }
+  .cmd-table td:last-child { color: var(--text2); }
+
   /* ── Animations ───────────────────────── */
   @keyframes fadeInUp {
     from { opacity: 0; transform: translateY(20px); }
@@ -335,12 +422,16 @@
 
   /* ── Responsive ───────────────────────── */
   @media (max-width: 600px) {
-    .hero h1 { font-size: 2.2rem; }
-    .section { padding: 3rem 1.25rem; }
-    .section h2 { font-size: 1.6rem; }
+    .hero h1 { font-size: 2rem; }
+    .section { padding: 2.5rem 1.25rem; }
+    .section h2 { font-size: 1.5rem; }
     .step { flex-direction: column; gap: 0.75rem; }
     .hero-buttons { flex-direction: column; align-items: center; }
     .features { grid-template-columns: 1fr; }
+    .os-picker { flex-direction: column; align-items: center; }
+    .os-card { max-width: 100%; width: 100%; }
+    .membership-card .perks { grid-template-columns: 1fr; }
+    .comparison { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -349,86 +440,114 @@
 <!-- ━━━━━ HERO ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
 <section class="hero">
   <div class="hero-badge">
-    <span class="dot"></span> Zero → Hero in Under 5 Minutes
+    <span class="dot"></span> Copy-Paste Is Dead. Meet Your AI Assistant.
   </div>
-  <h1>Ship Code at the<br><span class="gradient">Speed of Thought</span></h1>
+  <h1>Turn Your Computer Into a<br><span class="gradient">Personal Assistant</span></h1>
   <p class="sub">
-    <strong>YOLO Auto</strong> is the simplest AI coding agent on the planet.
-    Talk to it in plain English in your terminal, and it reads, writes, edits,
-    and executes code for you. No PhD required.
+    <strong>YOLO Auto</strong> is like having someone who actually <em>does</em> the work for you — not just gives you answers you have to copy and paste. Tell it what you want in plain English, and it handles everything on your computer: organizing files, building websites, writing documents, running programs. No coding needed.
   </p>
   <div class="hero-buttons">
-    <a href="#start" class="btn btn-primary">⚡ Start Now (5 min)</a>
-    <a href="#what" class="btn btn-secondary">↓ What is YOLO Auto?</a>
+    <a href="#os-pick" class="btn btn-primary">⚡ Get Started (5 min)</a>
+    <a href="#what" class="btn btn-secondary">↓ How It Works</a>
   </div>
   <div class="hero-scroll">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 13l5 5 5-5M7 6l5 5 5-5"/></svg>
   </div>
 </section>
 
+<!-- ━━━━━ OS PICKER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div class="os-picker-wrap" id="os-pick">
+  <div class="os-picker-label">First, which computer are you on?</div>
+  <div class="os-picker">
+    <div class="os-card active" data-os="mac" onclick="selectOS('mac')">
+      <span class="os-icon">🍎</span>
+      <span class="os-name">Mac</span>
+      <span class="os-check">✓ Selected</span>
+    </div>
+    <div class="os-card" data-os="windows" onclick="selectOS('windows')">
+      <span class="os-icon">🪟</span>
+      <span class="os-name">Windows</span>
+      <span class="os-check">✓ Selected</span>
+    </div>
+    <div class="os-card" data-os="linux" onclick="selectOS('linux')">
+      <span class="os-icon">🐧</span>
+      <span class="os-name">Linux</span>
+      <span class="os-check">✓ Selected</span>
+    </div>
+  </div>
+</div>
+
 <!-- ━━━━━ WHAT IS IT? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
 <section class="section" id="what">
-  <h2>🤔 What Is YOLO Auto?</h2>
+  <h2>🤔 Wait — So It's NOT Just ChatGPT?</h2>
   <p class="lead">
-    An AI coding agent that lives in your terminal. You type what you want
-    in English — it reads your code, edits files, runs commands, and builds
-    your project. Think of it as <strong>a tireless pair programmer</strong> that
-    never sleeps, never judges, and actually reads the docs.
+    Right. ChatGPT <em>tells</em> you what to do. YOLO Auto <em>does</em> it. Imagine you ask ChatGPT to organize your photos — it gives you steps. With YOLO Auto, it actually opens the folders, sorts the files, renames them, and tells you when it's done. <strong>You just sit back.</strong>
   </p>
+
+  <div class="comparison">
+    <div class="comparison-col old">
+      <h4>❌ The Old Way</h4>
+      <p style="color:var(--text2);font-size:0.9rem;">Ask ChatGPT → Read the response → Copy the steps → Paste them one by one → Something breaks → Go back and ask again → Copy → Paste → Repeat forever…</p>
+    </div>
+    <div class="comparison-col new">
+      <h4>✅ The YOLO Auto Way</h4>
+      <p style="color:var(--text2);font-size:0.9rem;">"Organize my desktop into folders by date" → It does it. Done. You don't touch anything. It reads, moves, creates, and finishes — all on its own.</p>
+    </div>
+  </div>
 
   <div class="features">
     <div class="feature">
+      <div class="feature-icon">🖥️</div>
+      <h4>Works On Your Computer</h4>
+      <p>It can open folders, rename files, run programs, and organize your stuff — on <em>your</em> machine, not some cloud somewhere.</p>
+    </div>
+    <div class="feature">
       <div class="feature-icon">💬</div>
-      <h4>Plain English</h4>
-      <p>Say <em>"Add a dark mode toggle to my settings page"</em> and watch it happen.</p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">📁</div>
-      <h4>Reads Your Project</h4>
-      <p>It scans your files, understands your codebase, and works where you work.</p>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">✏️</div>
-      <h4>Edits Files Directly</h4>
-      <p>No copy-paste. It makes precise edits, creates files, and deletes dead code.</p>
+      <h4>Talks Like a Human</h4>
+      <p>No special language required. Say <em>"clean up my downloads folder"</em> or <em>"build me a website for my bakery"</em> and it just works.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">⚡</div>
-      <h4>Runs Commands</h4>
-      <p>Installs packages, runs tests, starts servers — whatever your project needs.</p>
+      <h4>No More Copy-Paste</h4>
+      <p>Stop going back and forth between ChatGPT and your computer. The assistant <em>lives</em> on your machine and does things directly.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">🔐</div>
+      <h4>You're In Control</h4>
+      <p>You see everything it does, in real time. You can pause, redirect, or stop it anytime. Nothing happens without you knowing.</p>
     </div>
     <div class="feature">
       <div class="feature-icon">🧠</div>
-      <h4>Remembers Context</h4>
-      <p>It knows your project conventions, coding style, and past decisions.</p>
+      <h4>Learns As You Go</h4>
+      <p>It remembers your preferences, your file structure, and how you like things done. The more you use it, the better it gets.</p>
     </div>
     <div class="feature">
-      <div class="feature-icon">🆓</div>
-      <h4>Free to Start</h4>
-      <p>Open source. Bring your own API key (or subscription) and you're off.</p>
+      <div class="feature-icon">🏋️</div>
+      <h4>Like a Gym Membership</h4>
+      <p>One simple membership gives you unlimited access. No per-use fees, no credits, no confusing pricing. Just one key that unlocks everything.</p>
     </div>
   </div>
 
   <div class="terminal">
     <div class="terminal-bar">
       <div class="terminal-dots"><span class="terminal-dot r"></span><span class="terminal-dot y"></span><span class="terminal-dot g"></span></div>
-      <div class="terminal-tab">yolo — ~/my-project</div>
+      <div class="terminal-tab">yolo — ~/</div>
     </div>
     <div class="terminal-body">
-      <div class="line"><span style="color:#a78bfa;font-weight:600;">you</span> <span style="color:#e0e0f0;">build me a landing page for yolo-auto.com with a dark theme</span></div>
-      <div class="line" style="color:var(--text2);margin-top:0.5rem;">— reading project structure…</div>
-      <div class="line" style="color:var(--text2);">— writing index.html, styles.css…</div>
-      <div class="line" style="color:var(--text2);">— running npx serve to preview…</div>
-      <div class="line" style="color:var(--green);margin-top:0.5rem;">✅ Done! Page is live at http://localhost:3000</div>
-      <div class="line" style="color:var(--text2);margin-top:0.5rem;">Open in your browser to see it.</div>
+      <div class="line"><span style="color:#a78bfa;font-weight:600;">you</span> <span style="color:#e0e0f0;">organize my downloads folder — put images into a "Pictures" folder, PDFs into "Documents", and delete anything older than a year</span></div>
+      <div class="line" style="color:var(--text2);margin-top:0.5rem;">— scanning ~/Downloads… 247 files found</div>
+      <div class="line" style="color:var(--text2);">— moving 89 images → ~/Downloads/Pictures/</div>
+      <div class="line" style="color:var(--text2);">— moving 34 PDFs → ~/Downloads/Documents/</div>
+      <div class="line" style="color:var(--text2);">— deleting 18 files from 2024…</div>
+      <div class="line" style="color:var(--green);margin-top:0.5rem;">✅ Done! Downloads folder is clean. 141 files organized, 18 old files removed.</div>
     </div>
   </div>
 </section>
 
-<!-- ━━━━━ STEP 1: OPEN TERMINAL ━━━━━━━━━━━━━━━━━━━ -->
+<!-- ━━━━━ STEPS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
 <section class="section" id="start">
-  <h2>📋 0 → Hero: Step-by-Step</h2>
-  <p class="lead">Follow these steps. Even if you've <strong>never opened a terminal before</strong>, you'll be up and running in minutes.</p>
+  <h2>📋 New Here? Let's Get You Started!</h2>
+  <p class="lead">Follow these steps — even if you've <strong>never opened a terminal before</strong>, you'll be up and running in minutes.</p>
 
   <div class="steps">
     <!-- Step 1 -->
@@ -436,23 +555,27 @@
       <div class="step-num">1</div>
       <div class="step-content">
         <h4>Open Your Terminal</h4>
-        <p>Don't worry — this is just a window where you type text commands. Pick your operating system below:</p>
-        <div class="os-tabs">
-          <div class="os-tab active" data-os="mac">🍎 Mac</div>
-          <div class="os-tab" data-os="windows">🪟 Windows</div>
-          <div class="os-tab" data-os="linux">🐧 Linux</div>
+        <p>This is just a little window where you type text. Think of it like texting your computer instead of tapping on icons. Here's how to open it on your machine:</p>
+
+        <div class="os-specific mac show">
+          <div class="code-block"><pre><span class="comment">Press these two keys at the same time:</span>
+<span class="prompt">⌘ Cmd</span> + <span class="prompt">Space</span>
+<span class="comment">Then type:</span>
+<span class="output">Terminal</span>
+<span class="comment">And hit Enter.</span></pre></div>
+          <p style="font-size:0.85rem;color:var(--text2);">A window with a white or black background will pop up. That's your terminal! You're in.</p>
         </div>
-        <div class="os-panel active" data-os="mac">
-          <p>Press <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">⌘ Cmd</kbd> + <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Space</kbd> to open Spotlight, then type "Terminal" and hit Enter.</p>
-          <p style="font-size:0.85rem;color:var(--text2);">Alternatively: Finder → Applications → Utilities → Terminal</p>
+        <div class="os-specific windows">
+          <div class="code-block"><pre><span class="comment">Press the Windows key on your keyboard.</span>
+<span class="comment">Type:</span>
+<span class="output">PowerShell</span>
+<span class="comment">And hit Enter.</span></pre></div>
+          <p style="font-size:0.85rem;color:var(--text2);">💡 For the best experience, install <a href="https://apps.microsoft.com/store/detail/windows-terminal/9N0DX20HK701" style="color:var(--cyan);">Windows Terminal</a> from the Microsoft Store (it's free).</p>
         </div>
-        <div class="os-panel" data-os="windows">
-          <p>Press the <strong>Windows key</strong>, type "PowerShell" or "Command Prompt", and hit Enter.</p>
-          <p style="font-size:0.85rem;color:var(--text2);">💡 Pro tip: Install <a href="https://apps.microsoft.com/store/detail/windows-terminal/9N0DX20HK701" style="color:var(--cyan);">Windows Terminal</a> from the Microsoft Store for the best experience.</p>
-        </div>
-        <div class="os-panel" data-os="linux">
-          <p>Press <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Ctrl</kbd> + <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Alt</kbd> + <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">T</kbd>, or search your apps for "Terminal".</p>
-          <p style="font-size:0.85rem;color:var(--text2);">Most Linux distributions also have it in your apps menu under "System Tools".</p>
+        <div class="os-specific linux">
+          <div class="code-block"><pre><span class="comment">Press these three keys at the same time:</span>
+<span class="prompt">Ctrl</span> + <span class="prompt">Alt</span> + <span class="prompt">T</span></pre></div>
+          <p style="font-size:0.85rem;color:var(--text2);">You can also search your apps for "Terminal" and click it.</p>
         </div>
       </div>
     </div>
@@ -462,29 +585,24 @@
       <div class="step-num">2</div>
       <div class="step-content">
         <h4>Check You Have Node.js</h4>
-        <p>YOLO Auto needs Node.js (don't worry about what that means — it's just something your computer needs). Let's check if you have it:</p>
+        <p>YOLO Auto needs a free tool called Node.js. Think of it like the "engine" that makes YOLO Auto run. Let's see if you already have it:</p>
         <div class="code-block">
+          <button class="copy-btn" onclick="copyCode(this, 'node --version')">📋 Copy</button>
           <pre><span class="prompt">$</span> node --version</pre>
         </div>
-        <p>If you see a number like <code style="padding:2px 8px;border-radius:6px;background:var(--surface3);color:var(--green);font-size:0.9em;">v20.11.0</code>, you're golden. Skip to Step 3!</p>
-        <p>If you see <em>"command not found"</em>, install Node.js below:</p>
-        <div class="os-tabs">
-          <div class="os-tab active" data-os2="mac">🍎 Mac</div>
-          <div class="os-tab" data-os2="windows">🪟 Windows</div>
-          <div class="os-tab" data-os2="linux">🐧 Linux</div>
+        <p>Type that into your terminal and hit Enter. If you see a number like <code style="padding:2px 8px;border-radius:6px;background:var(--surface3);color:var(--green);font-size:0.9em;">v20.11.0</code> — great, skip to Step 3!</p>
+        <p>If you see <em>"command not found"</em> or an error, install it below:</p>
+
+        <div class="os-specific mac show">
+          <p>Go to <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a>, click the big green <strong>LTS</strong> button, download and run the installer. Then close and reopen your terminal, and type <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">node --version</code> again.</p>
         </div>
-        <div class="os-panel active" data-os2="mac">
-          <p>The easiest way: go to <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a>, download the <strong>LTS version</strong>, and run the installer.</p>
-          <p style="font-size:0.85rem;color:var(--text2);">After installing, close and reopen Terminal, then run <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">node --version</code> to confirm.</p>
+        <div class="os-specific windows">
+          <p>Go to <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a>, click the big green <strong>LTS</strong> button, download and run the installer. Check the box for "Automatically install the necessary tools." Then close and reopen PowerShell, and type <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">node --version</code> again.</p>
         </div>
-        <div class="os-panel" data-os2="windows">
-          <p>Go to <a href="https://nodejs.org" style="color:var(--cyan);">nodejs.org</a>, download the <strong>LTS version</strong>, and run the installer. Make sure to check the box that says "Automatically install the necessary tools".</p>
-          <p style="font-size:0.85rem;color:var(--text2);">After installing, close and reopen PowerShell/Command Prompt, then run <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">node --version</code>.</p>
-        </div>
-        <div class="os-panel" data-os2="linux">
+        <div class="os-specific linux">
           <div class="code-block"><pre><span class="prompt">$</span> curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 <span class="prompt">$</span> sudo apt-get install -y nodejs</pre></div>
-          <p style="font-size:0.85rem;color:var(--text2);">Other distros: check <a href="https://nodejs.org/en/download/package-manager" style="color:var(--cyan);">nodejs.org</a> for your package manager.</p>
+          <p style="font-size:0.85rem;color:var(--text2);">On other Linux versions, check <a href="https://nodejs.org/en/download/package-manager" style="color:var(--cyan);">nodejs.org</a> for instructions.</p>
         </div>
       </div>
     </div>
@@ -494,15 +612,26 @@
       <div class="step-num">3</div>
       <div class="step-content">
         <h4>Install YOLO Auto</h4>
-        <p>Copy and paste this one line into your terminal (paste is <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Ctrl+V</kbd> or <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">⌘ Cmd+V</kbd> on Mac):</p>
+        <p>One line. Copy it, paste it into your terminal, hit Enter. That's it.</p>
+
+        <div class="os-specific mac show">
+          <p style="font-size:0.85rem;color:var(--text2);">Paste in terminal is <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">⌘ Cmd + V</kbd></p>
+        </div>
+        <div class="os-specific windows">
+          <p style="font-size:0.85rem;color:var(--text2);">Paste in PowerShell is <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Ctrl + V</kbd> (or right-click)</p>
+        </div>
+        <div class="os-specific linux">
+          <p style="font-size:0.85rem;color:var(--text2);">Paste in terminal is <kbd style="padding:2px 8px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);font-family:monospace;">Ctrl + Shift + V</kbd></p>
+        </div>
+
         <div class="code-block">
           <button class="copy-btn" onclick="copyCode(this, 'npm install -g @mariozechner/pi-coding-agent')">📋 Copy</button>
           <pre><span class="prompt">$</span> npm install -g @mariozechner/pi-coding-agent</pre>
         </div>
-        <p>This downloads and sets up YOLO Auto. It'll take about 30 seconds. Once it finishes, you're almost there!</p>
+        <p>Takes about 30 seconds. You'll see some text fly by — that's normal.</p>
         <div class="info-box tip">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          <div><strong>What just happened?</strong> npm (Node's package manager) downloaded the YOLO Auto coding agent and made it available everywhere on your computer. You only need to do this once.</div>
+          <div><strong>What just happened?</strong> npm (which came with Node.js) downloaded YOLO Auto and installed it on your computer. You only do this once — like installing an app from the App Store.</div>
         </div>
       </div>
     </div>
@@ -511,60 +640,61 @@
     <div class="step reveal" id="step4">
       <div class="step-num">4</div>
       <div class="step-content">
-        <h4>Get an API Key (or Use Your Subscription)</h4>
-        <p>YOLO Auto needs access to an AI model. You have <strong>two options</strong> — pick whichever works for you:</p>
+        <h4>Get Your YOLO Auto Membership Key</h4>
+        <p>Think of this like a <strong>gym membership</strong>. One key gives you unlimited access to the whole thing — no credits, no "per-use" fees, no confusing tiers. Just one membership that unlocks everything.</p>
 
-        <h3 style="margin-top:1.5rem;">Option A: Bring an API Key (pay-as-you-go, ~$3 to start)</h3>
-        <div class="os-tabs">
-          <div class="os-tab active" data-provider="anthropic">🧠 Anthropic (Claude — recommended)</div>
-          <div class="os-tab" data-provider="openai">🤖 OpenAI (ChatGPT)</div>
+        <div class="membership-card">
+          <h4>🏋️ YOLO Auto Membership</h4>
+          <div class="price">One Key to Rule Them All</div>
+          <ul class="perks">
+            <li>Unlimited AI assistant sessions</li>
+            <li>Works on any computer, any project</li>
+            <li>Organize files, build websites, write docs</li>
+            <li>No per-task fees or usage limits</li>
+            <li>Cancel anytime</li>
+            <li>First $5 of usage free</li>
+          </ul>
         </div>
-        <div class="os-panel active" data-provider="anthropic">
-          <ol style="margin-left:1.25rem;color:var(--text2);line-height:2;">
-            <li>Go to <a href="https://console.anthropic.com" style="color:var(--cyan);">console.anthropic.com</a></li>
-            <li>Sign up or log in</li>
-            <li>Click "API Keys" in the left sidebar</li>
-            <li>Click "Create Key", give it a name (e.g., "yolo-auto"), and copy it</li>
-            <li>Now tell your terminal about it (replace the placeholder with your actual key):</li>
-          </ol>
+
+        <h3 style="margin-top:2rem;">How to get your membership key:</h3>
+        <ol style="margin-left:1.25rem;color:var(--text2);line-height:2.2;font-size:0.95rem;">
+          <li>Go to <strong><a href="#" style="color:var(--cyan);">yolo-auto.com/signup</a></strong> and create an account</li>
+          <li>Choose your plan (starts at $5 — less than a sandwich)</li>
+          <li>You'll get a <strong>YOLO API Key</strong> — it looks like <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">ya-sk-xxxxxxxxxxxxx</code></li>
+          <li>Copy that key and tell your computer about it:</li>
+        </ol>
+
+        <div class="os-specific mac show">
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'export ANTHROPIC_API_KEY=sk-ant-your-key-here')">📋 Copy</button>
-            <pre><span class="comment"># Mac / Linux:</span>
-<span class="prompt">$</span> export ANTHROPIC_API_KEY=<span class="output">sk-ant-your-key-here</span>
-
-<span class="comment"># Windows (PowerShell):</span>
-<span class="prompt">$</span> $env:ANTHROPIC_API_KEY="<span class="output">sk-ant-your-key-here</span>"</pre>
-          </div>
-          <div class="info-box warn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            <div><strong>Keep your key secret!</strong> Never share it or commit it to GitHub. The <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">export</code> command only sets it for your current terminal session. For a permanent setup, add the export line to your <code>~/.bashrc</code> or <code>~/.zshrc</code> file.</div>
+            <button class="copy-btn" onclick="copyCode(this, 'export YOLO_API_KEY=ya-sk-your-key-here')">📋 Copy</button>
+            <pre><span class="comment"># Type this, replacing the last part with your real key:</span>
+<span class="prompt">$</span> export YOLO_API_KEY=<span class="highlight">ya-sk-your-key-here</span></pre>
           </div>
         </div>
-        <div class="os-panel" data-provider="openai">
-          <ol style="margin-left:1.25rem;color:var(--text2);line-height:2;">
-            <li>Go to <a href="https://platform.openai.com/api-keys" style="color:var(--cyan);">platform.openai.com/api-keys</a></li>
-            <li>Sign up or log in, then add a payment method</li>
-            <li>Click "Create new secret key", give it a name, and copy it</li>
-            <li>Tell your terminal about it:</li>
-          </ol>
+        <div class="os-specific windows">
           <div class="code-block">
-            <button class="copy-btn" onclick="copyCode(this, 'export OPENAI_API_KEY=sk-your-key-here')">📋 Copy</button>
-            <pre><span class="comment"># Mac / Linux:</span>
-<span class="prompt">$</span> export OPENAI_API_KEY=<span class="output">sk-your-key-here</span>
-
-<span class="comment"># Windows (PowerShell):</span>
-<span class="prompt">$</span> $env:OPENAI_API_KEY="<span class="output">sk-your-key-here</span>"</pre>
+            <button class="copy-btn" onclick="copyCode(this, '$env:YOLO_API_KEY=\"ya-sk-your-key-here\"')">📋 Copy</button>
+            <pre><span class="comment"># Type this, replacing the last part with your real key:</span>
+<span class="prompt">$</span> $env:YOLO_API_KEY="<span class="highlight">ya-sk-your-key-here</span>"</pre>
+          </div>
+        </div>
+        <div class="os-specific linux">
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this, 'export YOLO_API_KEY=ya-sk-your-key-here')">📋 Copy</button>
+            <pre><span class="comment"># Type this, replacing the last part with your real key:</span>
+<span class="prompt">$</span> export YOLO_API_KEY=<span class="highlight">ya-sk-your-key-here</span></pre>
           </div>
         </div>
 
-        <h3 style="margin-top:2rem;">Option B: Use an Existing Subscription (Claude Pro, ChatGPT Plus, Copilot)</h3>
-        <p>If you already pay for one of these, just run:</p>
-        <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this, 'pi\n/login')">📋 Copy</button>
-          <pre><span class="prompt">$</span> pi
-<span class="output">(then type)</span> <span class="cmd">/login</span></pre>
+        <div class="info-box warn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <div><strong>Keep your key private!</strong> Like a gym membership card, don't share it. The <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">export</code> command remembers it for your current terminal session. For a permanent setup, add the export line to your <code>~/.bashrc</code> or <code>~/.zshrc</code> file.</div>
         </div>
-        <p>Select your provider and log in through your browser. Done!</p>
+
+        <div class="info-box note" style="margin-top:1.5rem;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <div><strong>Already have a subscription?</strong> If you pay for Claude Pro, ChatGPT Plus, or GitHub Copilot, you can use that instead. Just type <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">/login</code> after launching and pick your provider.</div>
+        </div>
       </div>
     </div>
 
@@ -572,35 +702,35 @@
     <div class="step reveal" id="step5">
       <div class="step-num">5</div>
       <div class="step-content">
-        <h4>Launch and Make Magic 🪄</h4>
-        <p>Navigate to your project folder (or any folder), then type the magic word:</p>
+        <h4>Launch and Talk to Your Assistant 🪄</h4>
+        <p>Pick a folder where you want the assistant to work (or just use your home folder), then launch it:</p>
         <div class="code-block">
-          <button class="copy-btn" onclick="copyCode(this, 'cd your-project\npi')">📋 Copy</button>
-          <pre><span class="comment"># Go to your project folder (or make one):</span>
-<span class="prompt">$</span> <span class="cmd">cd</span> ~/my-cool-project
+          <button class="copy-btn" onclick="copyCode(this, 'cd ~/Desktop\npi')">📋 Copy</button>
+          <pre><span class="comment"># Go to your Desktop (or any folder you want):</span>
+<span class="prompt">$</span> <span class="cmd">cd</span> ~/Desktop
 
 <span class="comment"># Start YOLO Auto:</span>
 <span class="prompt">$</span> pi</pre>
         </div>
-        <p>You'll see a screen like this. Now just <strong>talk to it</strong>!</p>
+        <p>You'll see something like this. Now just <strong>talk to it in plain English!</strong></p>
         <div class="terminal">
           <div class="terminal-bar">
             <div class="terminal-dots"><span class="terminal-dot r"></span><span class="terminal-dot y"></span><span class="terminal-dot g"></span></div>
-            <div class="terminal-tab">yolo — ~/my-cool-project</div>
+            <div class="terminal-tab">yolo — ~/Desktop</div>
           </div>
           <div class="terminal-body">
-            <div class="line" style="color:var(--green);">✓ Anthropic · claude-sonnet-4-20250514 · thinking: minimal</div>
-            <div class="line" style="color:var(--text2);">session: wild-finch</div>
-            <div class="line" style="margin-top:0.5rem;color:var(--text2);">Type /hotkeys for all shortcuts.</div>
+            <div class="line" style="color:var(--green);">✓ YOLO Auto ready</div>
+            <div class="line" style="color:var(--text2);">session: happy-dolphin</div>
+            <div class="line" style="margin-top:0.5rem;color:var(--text2);">Type /hotkeys for keyboard shortcuts.</div>
             <div class="line" style="margin-top:0.75rem;"><span style="color:#a78bfa;font-weight:600;">you</span> <span class="blink">▊</span></div>
           </div>
         </div>
-        <p style="margin-top:1rem;"><strong>Type your request and hit Enter!</strong> For example:</p>
+        <p style="margin-top:1rem;"><strong>Now try something! Type a request and hit Enter:</strong></p>
         <div class="code-block">
-          <pre><span class="comment">→ "create a todo app using React"</span>
-<span class="comment">→ "fix the bug in login.ts"</span>
-<span class="comment">→ "explain what this codebase does"</span>
-<span class="comment">→ "add tests for the auth module"</span></pre>
+          <pre><span class="comment">→ "organize my desktop — put screenshots in a folder"</span>
+<span class="comment">→ "create a simple website for my cat with photos"</span>
+<span class="comment">→ "rename all files in this folder to lowercase"</span>
+<span class="comment">→ "write me a workout plan and save it as a PDF"</span></pre>
         </div>
       </div>
     </div>
@@ -609,75 +739,70 @@
 
 <!-- ━━━━━ FIRST SESSION ━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
 <section class="section" style="background: var(--surface); border-radius: 24px; max-width: 950px; padding: 4rem 2rem;">
-  <h2>🎮 Your First Session: A Playground</h2>
-  <p class="lead">The best way to learn is to <strong>just start talking</strong>. Here's a sample first conversation:</p>
+  <h2>🎮 Your First Session: See It in Action</h2>
+  <p class="lead">Here's what a real conversation looks like. Notice — <strong>you never copy and paste anything</strong>. The assistant just does it.</p>
 
   <div class="terminal">
     <div class="terminal-bar">
       <div class="terminal-dots"><span class="terminal-dot r"></span><span class="terminal-dot y"></span><span class="terminal-dot g"></span></div>
-      <div class="terminal-tab">yolo — ~/playground</div>
+      <div class="terminal-tab">yolo — ~/Desktop</div>
     </div>
     <div class="terminal-body">
-      <div class="line" style="color:var(--text2);">→ session: daring-koala</div>
-      <div class="line" style="margin-top:0.8rem;"><span style="color:#a78bfa;">you</span> make me a single HTML file with a counter app — a big number in the center and + and - buttons below it. give it a dark theme with purple buttons.</div>
+      <div class="line" style="color:var(--text2);">→ session: clever-fox</div>
+      <div class="line" style="margin-top:0.8rem;"><span style="color:#a78bfa;">you</span> i have a folder called "vacation-photos" on my desktop with about 200 photos. can you sort them into folders by month based on when they were taken?</div>
       <div class="line" style="margin-top:0.5rem;color:var(--text2);">─ assistant</div>
-      <div class="line" style="color:var(--accent2);">I'll create a counter app for you.</div>
-      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• writes counter.html</div>
-      <div class="line" style="margin-top:0.3rem;color:var(--green);">Done! counter.html is ready.</div>
-      <div class="line" style="margin-top:0.8rem;"><span style="color:#a78bfa;">you</span> add a reset button and make the counter persist when I refresh the page (use localStorage)</div>
-      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• reads counter.html</div>
-      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• edits counter.html (3 changes)</div>
-      <div class="line" style="margin-top:0.3rem;color:var(--green);">Done! Added reset button and localStorage persistence.</div>
-      <div class="line" style="margin-top:0.8rem;"><span style="color:#a78bfa;">you</span> now can you convert it to React? make it a single component</div>
-      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• runs npx create-react-app counter-app</div>
-      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• edits src/App.js</div>
-      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• edits src/App.css</div>
-      <div class="line" style="margin-top:0.3rem;color:var(--green);">React app is ready! Run `npm start` in counter-app/ to see it.</div>
+      <div class="line" style="color:var(--accent2);">Let me look at those photos first.</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• scanning ~/Desktop/vacation-photos…</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• found 213 photos, dates range from January to August</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• creating folders: 01-January, 02-February, … 08-August</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• moving files into month folders…</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--green);">✅ Done! 213 photos sorted into 8 month folders.</div>
+      <div class="line" style="margin-top:0.8rem;"><span style="color:#a78bfa;">you</span> awesome. now can you make a simple HTML page that shows all these photos in a nice gallery? put it in the same folder</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• writing gallery.html…</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• generating image thumbnails and layout…</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--green);">✅ Done! gallery.html is ready. Open it in your browser to see your photo gallery.</div>
+      <div class="line" style="margin-top:0.8rem;"><span style="color:#a78bfa;">you</span> last thing — can you put all of this into a new folder called "vacation-2024" and zip it up so i can send it to my mom?</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• creating ~/Desktop/vacation-2024/</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• moving everything in…</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--text2);">• zipping vacation-2024.zip…</div>
+      <div class="line" style="margin-top:0.3rem;color:var(--green);">✅ Done! vacation-2024.zip is on your desktop — ready to email to mom.</div>
     </div>
   </div>
 
   <div style="margin-top:2rem; text-align:center;">
-    <p style="font-size:1.1rem;font-weight:600;">That's it. You're now a YOLO Auto user. 🚀</p>
+    <p style="font-size:1.1rem;font-weight:600;">Zero copy-paste. Zero "how do I do that." Just results. 🚀</p>
   </div>
 </section>
 
 <!-- ━━━━━ COMMANDS CHEAT SHEET ━━━━━━━━━━━━━━━━━━━━ -->
 <section class="section">
-  <h2>⌨️ Handy Commands</h2>
-  <p class="lead">Type these anytime inside YOLO Auto:</p>
+  <h2>⌨️ Handy Words to Know</h2>
+  <p class="lead">Type these anytime while using YOLO Auto:</p>
 
-  <style>
-    .cmd-table { width:100%; border-collapse:collapse; font-size:0.95rem; }
-    .cmd-table td { padding:0.85rem 1rem; border-bottom:1px solid var(--border); }
-    .cmd-table tr:hover { background: var(--surface); }
-    .cmd-table td:first-child { font-family:'SF Mono',monospace; color: var(--cyan); white-space:nowrap; font-weight:500; }
-    .cmd-table td:last-child { color: var(--text2); }
-  </style>
   <table class="cmd-table">
-    <tr><td>/login</td><td>Log in with an existing subscription (Claude Pro, ChatGPT, Copilot)</td></tr>
+    <tr><td>/login</td><td>Use an existing subscription (Claude Pro, ChatGPT Plus, Copilot)</td></tr>
     <tr><td>/model</td><td>Switch between AI models (or press Ctrl+L)</td></tr>
-    <tr><td>/new</td><td>Start a fresh session (new conversation)</td></tr>
-    <tr><td>/resume</td><td>Pick up where you left off (previous sessions)</td></tr>
-    <tr><td>/compact</td><td>Summarize conversation to save context (for long chats)</td></tr>
-    <tr><td>/tree</td><td>See and jump to any point in your conversation</td></tr>
-    <tr><td>/settings</td><td>Tweak thinking level, theme, and other options</td></tr>
+    <tr><td>/new</td><td>Start a fresh conversation</td></tr>
+    <tr><td>/resume</td><td>Continue where you left off last time</td></tr>
+    <tr><td>/compact</td><td>Summarize long conversations to save space</td></tr>
+    <tr><td>/settings</td><td>Change theme, thinking speed, and other options</td></tr>
     <tr><td>/quit</td><td>Exit YOLO Auto</td></tr>
-    <tr><td>@filename</td><td>Type @ to fuzzy-search and reference a file</td></tr>
-    <tr><td>Shift+Enter</td><td>Add a new line (for multi-line messages)</td></tr>
-    <tr><td>Ctrl+C</td><td>Clear what you've typed (press twice to quit)</td></tr>
+    <tr><td>@filename</td><td>Type @ to quickly find and mention a file</td></tr>
+    <tr><td>Shift+Enter</td><td>Add a new line (for longer messages)</td></tr>
+    <tr><td>Ctrl+C</td><td>Clear what you typed (press twice to exit)</td></tr>
   </table>
 </section>
 
 <!-- ━━━━━ FAQ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
 <section class="section">
-  <h2>❓ FAQ</h2>
+  <h2>❓ Questions You Might Have</h2>
 
   <div class="faq-item open">
     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">
-      Is this really free?
+      What exactly can it do for me?
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
-    <div class="faq-a">The agent itself is free and open source. You pay the AI provider for API usage — typically a few dollars a month for heavy use. Or use an existing Claude Pro / ChatGPT Plus / Copilot subscription at no extra cost.</div>
+    <div class="faq-a">Almost anything on your computer: organize files, rename batches of photos, build websites, create spreadsheets, write documents, convert file formats, download and sort things, run programs, search through your files — and a lot more. If you can describe it, it can probably do it.</div>
   </div>
 
   <div class="faq-item">
@@ -685,70 +810,70 @@
       Do I need to know how to code?
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
-    <div class="faq-a">You don't need to be an expert, but basic familiarity helps. Even if you're new, you can ask it to explain things as it goes. Many beginners use coding agents to learn while building.</div>
+    <div class="faq-a">Nope! You just talk to it in plain English. If you <em>do</em> know some coding, it's even more powerful — but it's designed to work for everyone. Many people use it to do things they'd normally spend hours Googling how to do.</div>
   </div>
 
   <div class="faq-item">
     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">
-      What can it actually build?
+      Is it safe? Can it mess up my computer?
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
-    <div class="faq-a">Websites, APIs, CLI tools, data pipelines, games, mobile apps (React Native), browser extensions — anything you can build with code. It works with any programming language.</div>
+    <div class="faq-a">You see everything it does as it happens. It's like watching someone use your computer — you can stop it anytime. It's smart about not doing dangerous things, but if you're nervous, start with a test folder. Think of it like letting a friend use your laptop: you're watching, and you can always say "stop."</div>
   </div>
 
   <div class="faq-item">
     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">
-      Can it break my computer?
+      How is this different from asking ChatGPT?
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
-    <div class="faq-a">It runs commands that can modify files and install software. It's smart about what it runs, but it's a good idea to use version control (Git) and review what it does. If you're nervous, run it in a folder with no important files first.</div>
+    <div class="faq-a">ChatGPT gives you <em>instructions</em>. YOLO Auto <em>does the work</em>. With ChatGPT, you read the answer, then go do the steps yourself. With YOLO Auto, the assistant is right there on your computer — it opens folders, moves files, creates documents, runs programs. You just watch and approve.</div>
   </div>
 
   <div class="faq-item">
     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">
-      Windows / Mac / Linux — which is best?
+      What does it cost?
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
-    <div class="faq-a">All three work great. On Windows, use <strong>Windows Terminal</strong> for the best experience. On Mac, the built-in Terminal or iTerm2 are both excellent. On Linux, pretty much any terminal emulator will do.</div>
+    <div class="faq-a">The YOLO Auto app itself is free and open source. You just need a membership key (starts at $5, includes your first $5 of usage free). Think of it like a gym — you pay one membership fee and get unlimited access to all the machines. No per-use charges, no hidden fees.</div>
   </div>
 
   <div class="faq-item">
     <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">
-      How does it compare to Cursor / Copilot / Claude Code?
+      Windows, Mac, or Linux — which one works best?
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
-    <div class="faq-a">YOLO Auto is more lightweight and terminal-native. It doesn't have a GUI — it's pure terminal. This makes it faster, more flexible, and easier to automate. It's also extremely extensible via TypeScript plugins, prompt templates, and skills.</div>
+    <div class="faq-a">All three work great. On Windows, grab <strong>Windows Terminal</strong> from the Microsoft Store (free) for the smoothest experience. Mac's built-in Terminal is perfect. Linux users are already pros at this.</div>
   </div>
 </section>
 
 <!-- ━━━━━ TROUBLESHOOTING ━━━━━━━━━━━━━━━━━━━━━━━━━ -->
 <section class="section reveal">
-  <h2>🔧 Troubles? We Got You</h2>
+  <h2>🔧 Stuck? Try These</h2>
 
   <div class="info-box warn">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    <div><strong>"command not found: pi"</strong><br>Your terminal doesn't know where npm put it. Try closing and reopening your terminal. If it still doesn't work, add npm's global bin to your PATH (search "npm global bin path" + your OS).</div>
+    <div><strong>"command not found: pi"</strong><br>Your terminal might not know where YOLO Auto is. Try closing the terminal and opening a fresh one. Still not working? Search online for "add npm global bin to PATH" + your operating system.</div>
   </div>
 
   <div class="info-box warn">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    <div><strong>"permission denied" during install</strong><br>On Mac/Linux, try: <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">sudo npm install -g @mariozechner/pi-coding-agent</code>. On Windows, run PowerShell as Administrator.</div>
+    <div><strong>"permission denied" when installing</strong><br>On Mac/Linux, try adding <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">sudo</code> in front: <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">sudo npm install -g @mariozechner/pi-coding-agent</code>. On Windows, run PowerShell as Administrator.</div>
   </div>
 
   <div class="info-box warn">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    <div><strong>API key not working</strong><br>Make sure you ran the <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">export</code> command in the <em>same terminal window</em> where you're running <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">pi</code>. The key only lasts for that session unless you add it to a startup file.</div>
+    <div><strong>Membership key not working</strong><br>Make sure you typed the <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">export</code> line in the <em>same terminal window</em> where you're launching <code style="padding:2px 6px;border-radius:4px;background:var(--surface3);">pi</code>. The key only sticks around for that window unless you add it to a startup file.</div>
   </div>
 </section>
 
 <!-- ━━━━━ CTA ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
 <section class="section" style="text-align:center; padding:5rem 2rem;">
   <div class="reveal">
-    <h2 style="font-size:2.5rem;margin-bottom:1rem;">Ready to <span class="gradient" style="background:linear-gradient(135deg,var(--accent2),var(--cyan),var(--pink));-webkit-background-clip:text;-webkit-text-fill-color:transparent;">YOLO</span> It?</h2>
+    <h2 style="font-size:2.5rem;margin-bottom:1rem;">Ready to Stop Copy-Pasting?</h2>
     <p style="color:var(--text2);font-size:1.15rem;max-width:500px;margin:0 auto 2rem;">
-      Open your terminal. Paste one command. Start building.
+      Open your terminal. Paste one command. Start telling your computer what to do — and watch it happen.
     </p>
-    <div class="code-block" style="max-width:500px;margin:0 auto;">
+    <div class="code-block" style="max-width:520px;margin:0 auto;">
       <button class="copy-btn" onclick="copyCode(this, 'npm install -g @mariozechner/pi-coding-agent && pi')">📋 Copy</button>
       <pre><span class="prompt">$</span> npm install -g @mariozechner/pi-coding-agent && pi</pre>
     </div>
@@ -757,7 +882,7 @@
 
 <!-- ━━━━━ FOOTER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
 <footer>
-  <p>Built with ⚡ by developers who believe coding agents should be <em>fast</em>.</p>
+  <p>YOLO Auto — Your computer, your assistant. No copy-paste required.</p>
   <p style="margin-top:0.5rem;">
     <a href="https://github.com/badlogic/pi-mono">GitHub</a> · 
     <a href="https://discord.com/invite/3cU7Bz4UPx">Discord</a> · 
@@ -769,38 +894,28 @@
 </footer>
 
 <script>
-// ── OS Tabs ──────────────────────────────
-document.querySelectorAll('.os-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    const group = tab.dataset.os || tab.dataset.os2 || tab.dataset.provider;
-    const container = tab.parentElement;
-    const panelContainer = container.nextElementSibling;
-    
-    // Deactivate siblings
-    container.querySelectorAll('.os-tab').forEach(t => t.classList.remove('active'));
-    // Activate this tab
-    tab.classList.add('active');
+// ── Global OS selection ──────────────────
+let currentOS = 'mac';
 
-    // Handle panels (they might be siblings after the tabs or in the same parent)
-    // Find panels that correspond to the same group attribute key
-    const attrKey = tab.dataset.os ? 'os' : tab.dataset.os2 ? 'os2' : 'provider';
-    
-    // Walk through sibling panels after the tabs
-    let next = container.nextElementSibling;
-    while (next) {
-      if (next.classList.contains('os-panel')) {
-        if (next.dataset[attrKey] === group) {
-          next.classList.add('active');
-        } else {
-          next.classList.remove('active');
-        }
-      } else {
-        break;
-      }
-      next = next.nextElementSibling;
-    }
+function selectOS(os) {
+  currentOS = os;
+  // Update OS cards
+  document.querySelectorAll('.os-card').forEach(card => {
+    card.classList.toggle('active', card.dataset.os === os);
   });
-});
+  // Update all OS-specific blocks
+  document.querySelectorAll('.os-specific').forEach(el => {
+    el.classList.toggle('show', el.classList.contains(os));
+  });
+  // Save preference
+  localStorage.setItem('yolo-os', os);
+}
+
+// Load saved OS preference on page load
+(function() {
+  const saved = localStorage.getItem('yolo-os') || 'mac';
+  selectOS(saved);
+})();
 
 // ── FAQ Toggle ─────────────────────────────
 document.querySelectorAll('.faq-q').forEach(q => {
