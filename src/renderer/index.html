@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>yolo-auto desktop</title>
+  <script>
+    document.documentElement.dataset.theme = localStorage.getItem('yolo-theme') || 'dark';
+  </script>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">ya</div>
+        <div class="brand-copy">
+          <div class="brand-title">yolo-auto</div>
+          <div class="brand-subtitle">desktop coding agent</div>
+        </div>
+        <button id="collapseSidebarBtn" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button>
+      </div>
+
+      <section class="side-section sessions-card">
+        <button id="newSessionBtn" class="button button-primary new-session-button" type="button">+ New session</button>
+        <div class="sessions-head">
+          <div class="side-label">recent</div>
+        </div>
+        <div id="sessionsList" class="sessions-list"></div>
+      </section>
+
+      <nav class="side-section side-nav" aria-label="Sidebar navigation">
+        <button id="sessionsPaneBtn" class="side-nav-item" type="button">
+          <strong>Sessions</strong>
+          <span>All chats</span>
+        </button>
+        <button id="skillsPaneBtn" class="side-nav-item" type="button">
+          <strong>Skills</strong>
+          <span>Manage skills</span>
+        </button>
+        <button id="settingsBtn" class="side-nav-item" type="button">
+          <strong>Settings</strong>
+          <span>Model + defaults</span>
+        </button>
+        <button id="logsBtn" class="side-nav-item" type="button">
+          <strong>Logs</strong>
+          <span>Open app log</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div id="statusText" class="status-text">Ready</div>
+        <button id="resetBtn" class="link-button">Reset session</button>
+      </div>
+    </aside>
+
+    <main class="chat-shell">
+      <header class="chat-header">
+        <div>
+          <h1>Desktop coding + life assistant</h1>
+          <p>Start from your workspace, then choose any folder or repo when you want it to work there.</p>
+        </div>
+        <div class="header-actions">
+          <div id="connectionChip" class="chip muted">configure model</div>
+          <button id="themeToggleBtn" class="theme-toggle" type="button" aria-label="Toggle light and dark mode">Dark</button>
+        </div>
+      </header>
+
+      <section id="messages" class="messages">
+        <div class="welcome-card">
+          <div class="welcome-kicker">pi sdk agent mode</div>
+          <h2>Tell it what you need handled.</h2>
+          <p>Use YOLO Auto as a central hub for your computer and repos. Pick a folder below when you want it to organize, summarize, code, run tests, package, or work on files there.</p>
+          <div class="example-grid">
+            <button class="example-prompt">Inspect this repo and tell me the safest next refactor.</button>
+            <button class="example-prompt">Run the tests, fix the failure, and explain the change.</button>
+            <button class="example-prompt">Clean up my Downloads folder and group files by type.</button>
+          </div>
+        </div>
+      </section>
+
+      <footer class="composer-wrap">
+        <div class="folder-hub">
+          <div class="folder-hub-copy">
+            <span class="folder-hub-label">Workspace</span>
+            <strong id="chatWorkspaceName">workspace</strong>
+            <small id="chatWorkspacePath">No folder selected</small>
+          </div>
+          <label class="thinking-control">
+            <span>Thinking</span>
+            <select id="thinkingLevelSelect" aria-label="Chat thinking level">
+              <option value="none">None</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+            </select>
+          </label>
+          <div class="folder-hub-actions">
+            <button id="chooseWorkspaceBtn" class="button button-primary" type="button">Choose folder</button>
+            <button id="revealWorkspaceBtn" class="button button-ghost" type="button">Open folder</button>
+          </div>
+        </div>
+        <div id="queuePanel" class="queue-panel hidden"></div>
+        <div id="filePicker" class="file-picker hidden"></div>
+        <div class="composer">
+          <div id="promptInput" class="composer-editor" contenteditable="true" spellcheck="false" autocorrect="off" autocapitalize="off" role="textbox" aria-multiline="true" data-placeholder="Ask yolo-auto to handle something for you…"></div>
+          <button id="followUpBtn" class="action-button follow-up-button hidden" type="button">Follow up</button>
+          <button id="cancelBtn" class="action-button cancel-button hidden" type="button">Cancel</button>
+          <button id="sendBtn" class="send-button" aria-label="Send message">
+            <span>Send</span>
+          </button>
+        </div>
+        <div class="composer-hint">Type @ to mention files, or /skill for loaded skill suggestions. ! runs bash, !! runs bash without adding output to context. /compact, /session, /tools are local commands. Enter sends; while it works: Enter steers, Alt+Enter follows up, Esc or /stop cancels.</div>
+      </footer>
+    </main>
+  </div>
+
+  <div id="sessionsModal" class="modal-backdrop hidden">
+    <div class="modal management-modal">
+      <div class="modal-header">
+        <div>
+          <h2>Sessions</h2>
+          <p>All saved chats, newest first.</p>
+        </div>
+        <button id="closeSessionsBtn" class="icon-button" type="button">×</button>
+      </div>
+      <div class="pane-actions">
+        <button id="newSessionFromPaneBtn" class="button button-primary" type="button">New session</button>
+      </div>
+      <div id="allSessionsList" class="all-sessions-list"></div>
+    </div>
+  </div>
+
+  <div id="skillsModal" class="modal-backdrop hidden">
+    <div class="modal management-modal">
+      <div class="modal-header">
+        <div>
+          <h2>Skills management</h2>
+          <p>Enable, disable, and add folders for skills available to YOLO Auto.</p>
+        </div>
+        <button id="closeSkillsBtn" class="icon-button" type="button">×</button>
+      </div>
+
+      <div id="skillsStatus" class="pane-status"></div>
+      <div id="skillsList" class="skills-manage-list"></div>
+
+      <label class="field skill-dirs-field">
+        <span>Extra skill folders</span>
+        <textarea id="skillsExtraDirsInput" rows="3" placeholder="One folder path per line"></textarea>
+      </label>
+
+      <div class="modal-actions">
+        <button id="refreshSkillsBtn" class="button button-ghost" type="button">Refresh</button>
+        <button id="saveSkillDirsBtn" class="button button-primary" type="button">Save skill folders</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settingsModal" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2>Settings</h2>
+          <p>Connect the model that powers your personal assistant.</p>
+        </div>
+        <button id="closeSettingsBtn" class="icon-button">×</button>
+      </div>
+
+      <label class="field">
+        <span>API Base URL</span>
+        <input id="apiBaseUrlInput" type="text" placeholder="https://api.openai.com/v1" />
+      </label>
+      <label class="field">
+        <span>API Key</span>
+        <input id="apiKeyInput" type="password" placeholder="sk-…" />
+      </label>
+      <label class="field two-col">
+        <span>Model</span>
+        <input id="modelInput" type="text" placeholder="gpt-4.1-mini" />
+      </label>
+      <label class="field two-col">
+        <span>Default thinking level</span>
+        <select id="settingsThinkingLevelInput">
+          <option value="none">None</option>
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="xhigh">xhigh</option>
+        </select>
+      </label>
+      <label class="field two-col">
+        <span>Model compatibility</span>
+        <select id="compatibilityPresetInput">
+          <option value="openai">OpenAI-compatible</option>
+          <option value="local-basic">Local/basic OpenAI-compatible</option>
+        </select>
+        <small class="field-hint">Use local/basic if your endpoint rejects reasoning, strict tool schemas, or max_completion_tokens.</small>
+      </label>
+      <div class="modal-actions">
+        <button id="cancelSettingsBtn" class="button button-ghost">Cancel</button>
+        <button id="saveSettingsBtn" class="button button-primary">Save settings</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

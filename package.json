@@ -1,0 +1,18 @@
+{
+  "name": "yolo-auto-desktop",
+  "version": "0.1.0",
+  "description": "A local desktop personal assistant for everyday computer tasks.",
+  "main": "src/main/index.js",
+  "private": true,
+  "scripts": {
+    "start": "node scripts/ensure-electron.js && electron .",
+    "ensure-electron": "node scripts/ensure-electron.js"
+  },
+  "devDependencies": {
+    "electron": "^42.3.0"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "typebox": "^1.1.38"
+  }
+}
