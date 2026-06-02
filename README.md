@@ -35,6 +35,8 @@ Supported env vars:
 - `YOLO_AUTO_MODEL` / `OPENAI_MODEL`
 - `YOLO_AUTO_THINKING_LEVEL` / `OPENAI_REASONING_EFFORT`
 - `YOLO_AUTO_COMPATIBILITY_PRESET` / `YOLO_AUTO_MODEL_COMPATIBILITY` (`openai` or `local-basic`)
+- `YOLO_AUTO_MAX_CONCURRENCY` (default `2`, clamped from `1` to `8`)
+- `YOLO_AUTO_GUARDRAILS` (`ask` or `off`) / `YOLO_AUTO_YOLO=1` to disable command protections
 
 ## Skills
 
@@ -65,7 +67,9 @@ Additional Pi skills can be added through Pi-style settings/resources under the 
 - Default thinking level in Settings plus per-chat thinking level override
 - Lightweight model compatibility presets for OpenAI-compatible vs local/basic endpoints
 - Local command shorthands: `!cmd`, `!!cmd`, `/compact`, `/session`, and `/tools`
+- Multiple sessions can run at once; Settings → Max concurrent sessions defaults to 2 and is enforced only when pressing Send
+- If Send would exceed max concurrency, YOLO Auto shows the blocking sessions with options to terminate one and send, or cancel and wait
 - While a session works: Enter steers, Alt+Enter queues a follow-up, Esc/Cancel or typing `/stop` stops that session
 - Local file, web, and command abilities kept behind a simple desktop UI
-- Guardrails in the system prompt for reversible steps and confirmation before destructive actions
+- AI Guardrails setting for approval before extremely dangerous shell commands, with easy YOLO mode disable
 - App logs in Electron user data (`app.log`) with an in-app Logs button and retry logging for transient model failures

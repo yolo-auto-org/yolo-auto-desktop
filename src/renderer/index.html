@@ -18,7 +18,9 @@
           <div class="brand-title">yolo-auto</div>
           <div class="brand-subtitle">desktop coding agent</div>
         </div>
-        <button id="collapseSidebarBtn" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button>
+        <button id="collapseSidebarBtn" class="chrome-toggle sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-expanded="true">
+          <span class="chevron chevron-left" aria-hidden="true"></span>
+        </button>
       </div>
 
       <section class="side-section sessions-card">
@@ -34,37 +36,39 @@
           <strong>Sessions</strong>
           <span>All chats</span>
         </button>
-        <button id="skillsPaneBtn" class="side-nav-item" type="button">
-          <strong>Skills</strong>
-          <span>Manage skills</span>
-        </button>
         <button id="settingsBtn" class="side-nav-item" type="button">
           <strong>Settings</strong>
-          <span>Model + defaults</span>
-        </button>
-        <button id="logsBtn" class="side-nav-item" type="button">
-          <strong>Logs</strong>
-          <span>Open app log</span>
+          <span>Model, skills, logs</span>
         </button>
       </nav>
 
-      <div class="sidebar-footer">
-        <div id="statusText" class="status-text">Ready</div>
-        <button id="resetBtn" class="link-button">Reset session</button>
-      </div>
     </aside>
 
     <main class="chat-shell">
-      <header class="chat-header">
-        <div>
-          <h1>Desktop coding + life assistant</h1>
-          <p>Start from your workspace, then choose any folder or repo when you want it to work there.</p>
+      <div class="workspace-wrap">
+        <div class="folder-hub">
+          <label class="workspace-control">
+            <span class="folder-hub-label">Workspace</span>
+            <select id="workspaceSelect" class="workspace-select" aria-label="Workspace folder">
+              <option>No folder selected</option>
+            </select>
+          </label>
+          <label class="thinking-control">
+            <span>Thinking</span>
+            <select id="thinkingLevelSelect" aria-label="Chat thinking level">
+              <option value="none">None</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+            </select>
+          </label>
+          <div class="folder-hub-actions">
+            <button id="chooseWorkspaceBtn" class="button button-primary icon-only-button" type="button" aria-label="Choose folder" title="Choose folder"><span aria-hidden="true">📁</span></button>
+            <button id="revealWorkspaceBtn" class="button button-ghost icon-only-button open-folder-button" type="button" aria-label="Open folder" title="Open folder"><span aria-hidden="true">↗</span><span aria-hidden="true">📁</span></button>
+          </div>
         </div>
-        <div class="header-actions">
-          <div id="connectionChip" class="chip muted">configure model</div>
-          <button id="themeToggleBtn" class="theme-toggle" type="button" aria-label="Toggle light and dark mode">Dark</button>
-        </div>
-      </header>
+      </div>
 
       <section id="messages" class="messages">
         <div class="welcome-card">
@@ -78,29 +82,9 @@
           </div>
         </div>
       </section>
+      <button id="returnToBottomBtn" class="return-to-bottom hidden" type="button" aria-label="Return to bottom" title="Return to bottom">↓</button>
 
       <footer class="composer-wrap">
-        <div class="folder-hub">
-          <div class="folder-hub-copy">
-            <span class="folder-hub-label">Workspace</span>
-            <strong id="chatWorkspaceName">workspace</strong>
-            <small id="chatWorkspacePath">No folder selected</small>
-          </div>
-          <label class="thinking-control">
-            <span>Thinking</span>
-            <select id="thinkingLevelSelect" aria-label="Chat thinking level">
-              <option value="none">None</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="xhigh">xhigh</option>
-            </select>
-          </label>
-          <div class="folder-hub-actions">
-            <button id="chooseWorkspaceBtn" class="button button-primary" type="button">Choose folder</button>
-            <button id="revealWorkspaceBtn" class="button button-ghost" type="button">Open folder</button>
-          </div>
-        </div>
         <div id="queuePanel" class="queue-panel hidden"></div>
         <div id="filePicker" class="file-picker hidden"></div>
         <div class="composer">
@@ -111,7 +95,15 @@
             <span>Send</span>
           </button>
         </div>
-        <div class="composer-hint">Type @ to mention files, or /skill for loaded skill suggestions. ! runs bash, !! runs bash without adding output to context. /compact, /session, /tools are local commands. Enter sends; while it works: Enter steers, Alt+Enter follows up, Esc or /stop cancels.</div>
+        <div class="composer-hint">
+          <div id="statusIndicator" class="status-indicator status-ok">
+            <span class="status-label">Status</span>
+            <span id="statusLight" class="status-light" aria-hidden="true"></span>
+            <div id="statusText" class="status-text">Ready</div>
+          </div>
+          <button id="resetBtn" class="link-button" type="button">Reset session</button>
+          <button class="help-button" type="button" aria-label="Type @ to mention files, or /skill for loaded skill suggestions. ! runs bash, !! runs bash without adding output to context. /compact, /session, /tools are local commands. Enter sends; while it works: Enter steers, Alt+Enter follows up, Esc or /stop cancels." title="Type @ to mention files, or /skill for loaded skill suggestions. ! runs bash, !! runs bash without adding output to context. /compact, /session, /tools are local commands. Enter sends; while it works: Enter steers, Alt+Enter follows up, Esc or /stop cancels.">?</button>
+        </div>
       </footer>
     </main>
   </div>
@@ -121,85 +113,166 @@
       <div class="modal-header">
         <div>
           <h2>Sessions</h2>
-          <p>All saved chats, newest first.</p>
+          <p>Search and sort saved chats.</p>
         </div>
         <button id="closeSessionsBtn" class="icon-button" type="button">×</button>
       </div>
-      <div class="pane-actions">
-        <button id="newSessionFromPaneBtn" class="button button-primary" type="button">New session</button>
+      <div class="sessions-tabs" role="tablist" aria-label="Session sections">
+        <button id="sessionsAllTabBtn" class="sessions-tab active" type="button" role="tab" aria-selected="true" data-sessions-tab="all">All sessions</button>
+        <button id="sessionsRunningTabBtn" class="sessions-tab" type="button" role="tab" aria-selected="false" data-sessions-tab="running">Running</button>
       </div>
-      <div id="allSessionsList" class="all-sessions-list"></div>
-    </div>
-  </div>
 
-  <div id="skillsModal" class="modal-backdrop hidden">
-    <div class="modal management-modal">
-      <div class="modal-header">
-        <div>
-          <h2>Skills management</h2>
-          <p>Enable, disable, and add folders for skills available to YOLO Auto.</p>
+      <section class="sessions-tab-panel active" data-sessions-panel="all" role="tabpanel">
+        <div class="sessions-toolbar">
+          <label class="sessions-search-field">
+            <span>Search</span>
+            <input id="sessionsSearchInput" type="search" placeholder="Search previews or folders" autocomplete="off" />
+          </label>
+          <button id="newSessionFromPaneBtn" class="button button-primary" type="button">New session</button>
         </div>
-        <button id="closeSkillsBtn" class="icon-button" type="button">×</button>
-      </div>
+        <div id="allSessionsList" class="all-sessions-list"></div>
+      </section>
 
-      <div id="skillsStatus" class="pane-status"></div>
-      <div id="skillsList" class="skills-manage-list"></div>
-
-      <label class="field skill-dirs-field">
-        <span>Extra skill folders</span>
-        <textarea id="skillsExtraDirsInput" rows="3" placeholder="One folder path per line"></textarea>
-      </label>
-
-      <div class="modal-actions">
-        <button id="refreshSkillsBtn" class="button button-ghost" type="button">Refresh</button>
-        <button id="saveSkillDirsBtn" class="button button-primary" type="button">Save skill folders</button>
-      </div>
+      <section class="sessions-tab-panel hidden" data-sessions-panel="running" role="tabpanel">
+        <div class="running-sessions-head">
+          <div>
+            <h3>Session management</h3>
+            <p id="runningSessionsStatus">Loading running sessions…</p>
+          </div>
+          <button id="refreshRunningSessionsBtn" class="button button-ghost" type="button">Refresh</button>
+        </div>
+        <div id="runningSessionsList" class="running-sessions-list"></div>
+      </section>
     </div>
   </div>
 
   <div id="settingsModal" class="modal-backdrop hidden">
-    <div class="modal">
+    <div class="modal settings-modal">
       <div class="modal-header">
         <div>
           <h2>Settings</h2>
-          <p>Connect the model that powers your personal assistant.</p>
+          <p>Configure the model, skills, appearance, and logs.</p>
         </div>
         <button id="closeSettingsBtn" class="icon-button">×</button>
       </div>
 
-      <label class="field">
-        <span>API Base URL</span>
-        <input id="apiBaseUrlInput" type="text" placeholder="https://api.openai.com/v1" />
-      </label>
-      <label class="field">
-        <span>API Key</span>
-        <input id="apiKeyInput" type="password" placeholder="sk-…" />
-      </label>
-      <label class="field two-col">
-        <span>Model</span>
-        <input id="modelInput" type="text" placeholder="gpt-4.1-mini" />
-      </label>
-      <label class="field two-col">
-        <span>Default thinking level</span>
-        <select id="settingsThinkingLevelInput">
-          <option value="none">None</option>
-          <option value="low">low</option>
-          <option value="medium">medium</option>
-          <option value="high">high</option>
-          <option value="xhigh">xhigh</option>
-        </select>
-      </label>
-      <label class="field two-col">
-        <span>Model compatibility</span>
-        <select id="compatibilityPresetInput">
-          <option value="openai">OpenAI-compatible</option>
-          <option value="local-basic">Local/basic OpenAI-compatible</option>
-        </select>
-        <small class="field-hint">Use local/basic if your endpoint rejects reasoning, strict tool schemas, or max_completion_tokens.</small>
-      </label>
-      <div class="modal-actions">
+      <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+        <button class="settings-tab active" type="button" role="tab" aria-selected="true" data-settings-tab="model">Model</button>
+        <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="skills">Skills</button>
+        <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="appearance">Appearance</button>
+        <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="logs">Logs</button>
+      </div>
+
+      <section class="settings-panel active" data-settings-panel="model" role="tabpanel">
+        <label class="field">
+          <span>API Base URL</span>
+          <input id="apiBaseUrlInput" type="text" placeholder="https://api.openai.com/v1" />
+        </label>
+        <label class="field">
+          <span>API Key</span>
+          <input id="apiKeyInput" type="password" placeholder="sk-…" />
+        </label>
+        <label class="field two-col">
+          <span>Model</span>
+          <input id="modelInput" type="text" placeholder="gpt-4.1-mini" />
+        </label>
+        <label class="field two-col">
+          <span>Default thinking level</span>
+          <select id="settingsThinkingLevelInput">
+            <option value="none">None</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+          </select>
+        </label>
+        <label class="field two-col">
+          <span>Model compatibility</span>
+          <select id="compatibilityPresetInput">
+            <option value="openai">OpenAI-compatible</option>
+            <option value="local-basic">Local/basic OpenAI-compatible</option>
+          </select>
+          <small class="field-hint">Use local/basic if your endpoint rejects reasoning, strict tool schemas, or max_completion_tokens.</small>
+        </label>
+        <label class="field two-col">
+          <span>Max concurrent sessions</span>
+          <input id="maxConcurrencyInput" type="number" min="1" max="8" step="1" />
+          <small class="field-hint">Default is 2. This is only enforced when you press Send; browsing sessions is never blocked.</small>
+        </label>
+
+        <section class="settings-section" aria-labelledby="guardrailsSettingsTitle">
+          <div class="settings-section-head">
+            <h3 id="guardrailsSettingsTitle">AI Guardrails</h3>
+            <p>Light protection for only the most catastrophic shell commands.</p>
+          </div>
+          <label class="field two-col">
+            <span>Command protections</span>
+            <select id="guardrailsModeInput">
+              <option value="ask">Ask before extremely dangerous commands</option>
+              <option value="off">YOLO mode — disable all command protections</option>
+            </select>
+            <small class="field-hint">YOLO mode lets commands like disk wipes or root/home recursive deletes run without approval.</small>
+          </label>
+        </section>
+      </section>
+
+      <section class="settings-panel hidden" data-settings-panel="skills" role="tabpanel">
+        <div class="settings-section-head">
+          <h3>Skills management</h3>
+          <p>Enable, disable, and add folders for skills available to YOLO Auto.</p>
+        </div>
+        <div id="skillsStatus" class="pane-status"></div>
+        <div id="skillsList" class="skills-manage-list"></div>
+
+        <label class="field skill-dirs-field">
+          <span>Extra skill folders</span>
+          <textarea id="skillsExtraDirsInput" rows="3" placeholder="One folder path per line"></textarea>
+        </label>
+
+        <div class="pane-actions split-actions">
+          <button id="refreshSkillsBtn" class="button button-ghost" type="button">Refresh</button>
+          <button id="saveSkillDirsBtn" class="button button-primary" type="button">Save skill folders</button>
+        </div>
+      </section>
+
+      <section class="settings-panel hidden" data-settings-panel="appearance" role="tabpanel">
+        <div class="settings-section-head">
+          <h3>Appearance</h3>
+          <p>Switch between light and dark mode.</p>
+        </div>
+        <button id="themeToggleBtn" class="button button-ghost full" type="button" aria-label="Toggle light and dark mode">
+          Toggle theme — <span id="themeToggleStatus">Dark mode</span>
+        </button>
+      </section>
+
+      <section class="settings-panel hidden" data-settings-panel="logs" role="tabpanel">
+        <div class="settings-section-head">
+          <h3>Logs</h3>
+          <p>Open the local app log in your file browser.</p>
+        </div>
+        <button id="logsBtn" class="button button-ghost full" type="button">Open app log</button>
+      </section>
+
+      <div class="modal-actions settings-save-actions">
         <button id="cancelSettingsBtn" class="button button-ghost">Cancel</button>
         <button id="saveSettingsBtn" class="button button-primary">Save settings</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="concurrencyModal" class="modal-backdrop hidden">
+    <div class="modal concurrency-modal">
+      <div class="modal-header">
+        <div>
+          <h2>Max concurrent sessions reached</h2>
+          <p id="concurrencyModalSummary">Terminate one running session to send now, or cancel and wait.</p>
+        </div>
+        <button id="closeConcurrencyBtn" class="icon-button" type="button">×</button>
+      </div>
+      <div id="concurrencyBlockersList" class="running-sessions-list"></div>
+      <div class="modal-actions split-actions">
+        <button id="openSessionManagementBtn" class="button button-ghost" type="button">Open session management</button>
+        <button id="cancelConcurrencyBtn" class="button button-primary" type="button">Cancel and wait</button>
       </div>
     </div>
   </div>

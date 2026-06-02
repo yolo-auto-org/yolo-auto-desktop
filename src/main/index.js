@@ -1,7 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
-const { loadSettings, saveSettings, normalizeCompatibilityPreset } = require('./settings');
+const { loadSettings, saveSettings, normalizeCompatibilityPreset, normalizeGuardrails, normalizeMaxConcurrency } = require('./settings');
 const { createLogger } = require('./logger');
 const { ensureHomeBase, getHomeWorkspacePath } = require('./home-base');
 const { THINKING_LEVELS, normalizeThinkingLevel } = require('./thinking-levels');
@@ -41,6 +41,8 @@ function publicSettings() {
     model: settings.model || '',
     thinkingLevel: normalizeThinkingLevel(settings.thinkingLevel),
     compatibilityPreset: normalizeCompatibilityPreset(settings.compatibilityPreset),
+    maxConcurrency: normalizeMaxConcurrency(settings.maxConcurrency),
+    guardrails: normalizeGuardrails(settings.guardrails),
     thinkingLevels: THINKING_LEVELS
   };
 }
@@ -54,6 +56,8 @@ function saveAppSettings(patch = {}) {
     model: settings.model || '',
     thinkingLevel: normalizeThinkingLevel(settings.thinkingLevel),
     compatibilityPreset: normalizeCompatibilityPreset(settings.compatibilityPreset),
+    maxConcurrency: normalizeMaxConcurrency(settings.maxConcurrency),
+    guardrails: normalizeGuardrails(settings.guardrails),
     skills: settings.skills || {},
     agents: settings.agents || {},
     ...patch
@@ -61,6 +65,36 @@ function saveAppSettings(patch = {}) {
   workspaceRoot = settings.workspaceRoot || workspaceRoot || '';
   activeSessionId = settings.activeSessionId || activeSessionId || '';
   return settings;
+}
+
+async function requestCommandApproval({ command, reason, rule, source, cwd, sessionId } = {}) {
+  const detail = [
+    source ? `Source: ${source}` : '',
+    cwd ? `Folder: ${cwd}` : '',
+    reason ? `Reason: ${reason}` : '',
+    rule ? `Rule: ${rule}` : '',
+    '',
+    String(command || '')
+  ].filter((line, index) => line || index === 4).join('\n');
+
+  logger('warn', 'guardrails:approval-requested', { source, rule, sessionId, command: String(command || '') });
+
+  const options = {
+    type: 'warning',
+    title: 'AI Guardrails',
+    message: 'Approve this dangerous command?',
+    detail,
+    buttons: ['Cancel', 'Run anyway'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  };
+  const result = mainWindow
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options);
+  const approved = result.response === 1;
+  logger(approved ? 'warn' : 'info', approved ? 'guardrails:approved' : 'guardrails:denied', { source, rule, sessionId });
+  return approved;
 }
 
 async function activeSessionPayload() {
@@ -77,6 +111,17 @@ async function activeSessionPayload() {
   };
 }
 
+async function setWorkspaceRoot(nextRoot) {
+  const root = String(nextRoot || '').trim();
+  if (!root) throw new Error('Workspace folder is empty.');
+
+  workspaceRoot = root;
+  const session = await sessionManager.updateSessionWorkspace(activeSessionId, workspaceRoot);
+  activeSessionId = session.id;
+  saveAppSettings({ workspaceRoot, activeSessionId });
+  return { workspaceRoot, session };
+}
+
 function setupIpc() {
   ipcMain.handle('app:bootstrap', async () => ({
     settings: publicSettings(),
@@ -87,15 +132,28 @@ function setupIpc() {
   }));
 
   ipcMain.handle('settings:save', async (_event, nextSettings) => {
-    saveAppSettings({
+    const patch = {
       apiBaseUrl: String(nextSettings.apiBaseUrl || '').trim(),
       apiKey: String(nextSettings.apiKey || '').trim(),
       model: String(nextSettings.model || '').trim(),
       thinkingLevel: normalizeThinkingLevel(nextSettings.thinkingLevel, settings.thinkingLevel),
-      compatibilityPreset: normalizeCompatibilityPreset(nextSettings.compatibilityPreset, settings.compatibilityPreset)
-    });
+      compatibilityPreset: normalizeCompatibilityPreset(nextSettings.compatibilityPreset, settings.compatibilityPreset),
+      maxConcurrency: normalizeMaxConcurrency(nextSettings.maxConcurrency, settings.maxConcurrency),
+      guardrails: normalizeGuardrails(nextSettings.guardrails, settings.guardrails)
+    };
 
-    await sessionManager.reloadActive();
+    const needsReload = patch.apiBaseUrl !== String(settings.apiBaseUrl || '').trim()
+      || patch.apiKey !== String(settings.apiKey || '').trim()
+      || patch.model !== String(settings.model || '').trim()
+      || patch.compatibilityPreset !== normalizeCompatibilityPreset(settings.compatibilityPreset);
+
+    if (needsReload && sessionManager.hasBusySessions()) {
+      throw new Error('Cancel running sessions before changing model provider settings. Max concurrency can be changed by itself while sessions run.');
+    }
+
+    saveAppSettings(patch);
+
+    if (needsReload) await sessionManager.reloadActive();
     return publicSettings();
   });
 
@@ -103,6 +161,8 @@ function setupIpc() {
     activeSessionId,
     sessions: await sessionManager.listSessions()
   }));
+
+  ipcMain.handle('sessions:concurrency', async () => sessionManager.getConcurrencyState());
 
   ipcMain.handle('sessions:create', async () => {
     const session = await sessionManager.createSession({ workspaceRoot });
@@ -148,12 +208,10 @@ function setupIpc() {
       return { workspaceRoot, session: await sessionManager.getSession(activeSessionId) };
     }
 
-    workspaceRoot = result.filePaths[0];
-    const session = await sessionManager.updateSessionWorkspace(activeSessionId, workspaceRoot);
-    activeSessionId = session.id;
-    saveAppSettings({ workspaceRoot, activeSessionId });
-    return { workspaceRoot, session };
+    return setWorkspaceRoot(result.filePaths[0]);
   });
+
+  ipcMain.handle('workspace:set', async (_event, nextRoot) => setWorkspaceRoot(nextRoot));
 
   ipcMain.handle('workspace:reveal', async () => {
     const session = await sessionManager.getSession(activeSessionId);
@@ -188,7 +246,7 @@ function setupIpc() {
 
   ipcMain.handle('skills:set-enabled', async (_event, sessionId, skillName, enabled) => {
     const id = await resolveSessionId(sessionId);
-    await assertActiveSessionIdle();
+    await assertAllSessionsIdle();
     saveAppSettings({ skills: setSkillEntryEnabled(settings.skills, skillName, enabled) });
     await sessionManager.reloadActive();
     return sessionManager.listSkills(id);
@@ -196,7 +254,7 @@ function setupIpc() {
 
   ipcMain.handle('skills:set-extra-dirs', async (_event, sessionId, extraDirs) => {
     const id = await resolveSessionId(sessionId);
-    await assertActiveSessionIdle();
+    await assertAllSessionsIdle();
     saveAppSettings({ skills: setExtraSkillDirs(settings.skills, extraDirs) });
     await sessionManager.reloadActive();
     return sessionManager.listSkills(id);
@@ -233,7 +291,7 @@ function setupIpc() {
     return sessionManager.queueFollowUp(sessionId, text);
   });
 
-  ipcMain.handle('chat:cancel', async (_event, sessionId) => sessionManager.cancel(await resolveSessionId(sessionId)));
+  ipcMain.handle('chat:cancel', async (_event, sessionId) => sessionManager.cancel(await resolveSessionId(sessionId, { select: false })));
 
   ipcMain.handle('chat:reset', async (_event, sessionId) => {
     const session = await sessionManager.reset(await resolveSessionId(sessionId));
@@ -319,11 +377,12 @@ async function parseChatArgs(maybeSessionId, maybeUserText) {
   };
 }
 
-async function resolveSessionId(sessionId) {
+async function resolveSessionId(sessionId, options = {}) {
   const requestedId = String(sessionId || '').trim();
-  const session = await sessionManager.ensureSession(requestedId || activeSessionId || '');
+  const select = options.select !== false;
+  const session = await sessionManager.ensureSession(requestedId || activeSessionId || '', { select });
 
-  if (!requestedId || requestedId === activeSessionId || activeSessionId !== session.id) {
+  if (select && (!requestedId || requestedId === activeSessionId || activeSessionId !== session.id)) {
     activeSessionId = session.id;
     workspaceRoot = session.workspaceRoot || workspaceRoot;
     saveAppSettings({ activeSessionId, workspaceRoot });
@@ -332,9 +391,8 @@ async function resolveSessionId(sessionId) {
   return session.id;
 }
 
-async function assertActiveSessionIdle() {
-  const payload = await sessionManager.getPayload(activeSessionId);
-  if (payload?.busy) throw new Error('Cancel the running session before changing skills.');
+async function assertAllSessionsIdle() {
+  if (sessionManager.hasBusySessions()) throw new Error('Cancel running sessions before changing skills.');
 }
 
 function setSkillEntryEnabled(currentSkills = {}, skillName, enabled) {
@@ -409,6 +467,7 @@ app.whenReady().then(async () => {
     getSettings: () => settings,
     getDefaultWorkspaceRoot: () => workspaceRoot || homeBaseRoot,
     emit: (payload) => mainWindow?.webContents.send('agent:event', payload),
+    requestCommandApproval,
     log: logger
   });
 

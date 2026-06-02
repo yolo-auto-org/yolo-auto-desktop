@@ -1,5 +1,6 @@
 const THINKING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'];
 const RECENT_SESSION_LIMIT = 5;
+const BOTTOM_SCROLL_THRESHOLD = 32;
 
 const state = {
   settings: {},
@@ -10,24 +11,32 @@ const state = {
   activeSession: null,
   busy: false,
   currentAssistant: null,
+  stickToBottom: true,
   queues: { steering: [], followUp: [] },
+  concurrency: { maxConcurrency: 2, runningCount: 0, runningSessions: [], canStart: true, pendingText: '' },
   skills: { skills: [], diagnostics: [], extraDirs: [], loading: false, error: '' },
   filePicker: { open: false, mode: 'file', query: '', results: [], selectedIndex: 0, anchor: null, requestId: 0 },
+  sessionBrowser: { query: '', sortKey: 'date', sortDir: 'desc', tab: 'all' },
   sidebarCollapsed: localStorage.getItem('yolo-sidebar-collapsed') === 'true',
   theme: localStorage.getItem('yolo-theme') || document.documentElement.dataset.theme || 'dark'
 };
 
 const els = {
   appShell: document.querySelector('.app-shell'),
+  workspaceWrap: document.querySelector('.workspace-wrap'),
+  composerWrap: document.querySelector('.composer-wrap'),
+  workspaceSelect: document.getElementById('workspaceSelect'),
   workspacePath: document.getElementById('workspacePath'),
   chatWorkspaceName: document.getElementById('chatWorkspaceName'),
   chatWorkspacePath: document.getElementById('chatWorkspacePath'),
   modelName: document.getElementById('modelName'),
+  statusIndicator: document.getElementById('statusIndicator'),
+  statusLight: document.getElementById('statusLight'),
   statusText: document.getElementById('statusText'),
   thinkingLevelSelect: document.getElementById('thinkingLevelSelect'),
-  connectionChip: document.getElementById('connectionChip'),
   themeToggleBtn: document.getElementById('themeToggleBtn'),
   messages: document.getElementById('messages'),
+  returnToBottomBtn: document.getElementById('returnToBottomBtn'),
   queuePanel: document.getElementById('queuePanel'),
   filePicker: document.getElementById('filePicker'),
   sessionsList: document.getElementById('sessionsList'),
@@ -37,7 +46,13 @@ const els = {
   sessionsModal: document.getElementById('sessionsModal'),
   closeSessionsBtn: document.getElementById('closeSessionsBtn'),
   newSessionFromPaneBtn: document.getElementById('newSessionFromPaneBtn'),
+  sessionsSearchInput: document.getElementById('sessionsSearchInput'),
+  sessionsTabs: [...document.querySelectorAll('.sessions-tab')],
+  sessionsPanels: [...document.querySelectorAll('.sessions-tab-panel')],
   allSessionsList: document.getElementById('allSessionsList'),
+  runningSessionsStatus: document.getElementById('runningSessionsStatus'),
+  runningSessionsList: document.getElementById('runningSessionsList'),
+  refreshRunningSessionsBtn: document.getElementById('refreshRunningSessionsBtn'),
   skillsPaneBtn: document.getElementById('skillsPaneBtn'),
   logsBtn: document.getElementById('logsBtn'),
   skillsModal: document.getElementById('skillsModal'),
@@ -56,6 +71,8 @@ const els = {
   settingsBtn: document.getElementById('settingsBtn'),
   resetBtn: document.getElementById('resetBtn'),
   settingsModal: document.getElementById('settingsModal'),
+  settingsTabs: [...document.querySelectorAll('.settings-tab')],
+  settingsPanels: [...document.querySelectorAll('.settings-panel')],
   closeSettingsBtn: document.getElementById('closeSettingsBtn'),
   cancelSettingsBtn: document.getElementById('cancelSettingsBtn'),
   saveSettingsBtn: document.getElementById('saveSettingsBtn'),
@@ -63,7 +80,15 @@ const els = {
   apiKeyInput: document.getElementById('apiKeyInput'),
   modelInput: document.getElementById('modelInput'),
   settingsThinkingLevelInput: document.getElementById('settingsThinkingLevelInput'),
-  compatibilityPresetInput: document.getElementById('compatibilityPresetInput')
+  compatibilityPresetInput: document.getElementById('compatibilityPresetInput'),
+  maxConcurrencyInput: document.getElementById('maxConcurrencyInput'),
+  guardrailsModeInput: document.getElementById('guardrailsModeInput'),
+  concurrencyModal: document.getElementById('concurrencyModal'),
+  concurrencyModalSummary: document.getElementById('concurrencyModalSummary'),
+  concurrencyBlockersList: document.getElementById('concurrencyBlockersList'),
+  closeConcurrencyBtn: document.getElementById('closeConcurrencyBtn'),
+  cancelConcurrencyBtn: document.getElementById('cancelConcurrencyBtn'),
+  openSessionManagementBtn: document.getElementById('openSessionManagementBtn')
 };
 
 init();
@@ -78,10 +103,11 @@ async function init() {
   try {
     const bootstrap = await window.yolo.bootstrap();
     state.settings = bootstrap.settings || {};
+    state.concurrency.maxConcurrency = normalizeMaxConcurrency(state.settings.maxConcurrency);
     state.homeBaseRoot = bootstrap.homeBaseRoot || '';
     state.workspaceRoot = bootstrap.workspaceRoot || '';
     applySessionPayload(bootstrap);
-    renderMessagesFromHistory(bootstrap.active?.messages || []);
+    renderMessagesFromHistory(bootstrap.active?.messages || [], { partialAssistantText: bootstrap.active?.partialAssistantText || '' });
     renderChrome();
   } catch (error) {
     setStatus(error.message || 'Failed to load app');
@@ -95,6 +121,15 @@ function bindEvents() {
   els.sendBtn.addEventListener('click', primaryAction);
   els.followUpBtn.addEventListener('click', () => queuePrompt('followUp'));
   els.cancelBtn.addEventListener('click', cancelRun);
+  els.messages.addEventListener('scroll', handleMessagesScroll, { passive: true });
+  if (els.returnToBottomBtn) els.returnToBottomBtn.addEventListener('click', () => scrollToBottom({ force: true }));
+  if (els.composerWrap && 'ResizeObserver' in window) {
+    new ResizeObserver(updateReturnToBottomButton).observe(els.composerWrap);
+  }
+  window.addEventListener('resize', () => {
+    updateReturnToBottomButton();
+    renderWorkspaceSelect();
+  });
   els.promptInput.addEventListener('input', () => {
     autoGrowPrompt();
     updateFilePickerFromCaret();
@@ -135,17 +170,29 @@ function bindEvents() {
 
   els.newSessionBtn.addEventListener('click', createNewSession);
   if (els.collapseSidebarBtn) els.collapseSidebarBtn.addEventListener('click', toggleSidebar);
-  if (els.sessionsPaneBtn) els.sessionsPaneBtn.addEventListener('click', openSessionsPane);
+  if (els.workspaceSelect) els.workspaceSelect.addEventListener('change', handleWorkspaceSelectChange);
+  if (els.sessionsPaneBtn) els.sessionsPaneBtn.addEventListener('click', () => openSessionsPane());
   if (els.closeSessionsBtn) els.closeSessionsBtn.addEventListener('click', closeSessionsPane);
   if (els.newSessionFromPaneBtn) els.newSessionFromPaneBtn.addEventListener('click', async () => {
     await createNewSession();
     closeSessionsPane();
   });
+  if (els.sessionsSearchInput) els.sessionsSearchInput.addEventListener('input', () => {
+    state.sessionBrowser.query = els.sessionsSearchInput.value;
+    renderAllSessions();
+  });
+  els.sessionsTabs.forEach((button) => {
+    button.addEventListener('click', () => setSessionsTab(button.dataset.sessionsTab || 'all'));
+  });
+  if (els.refreshRunningSessionsBtn) els.refreshRunningSessionsBtn.addEventListener('click', refreshConcurrencyState);
   if (els.skillsPaneBtn) els.skillsPaneBtn.addEventListener('click', openSkillsPane);
   if (els.logsBtn) els.logsBtn.addEventListener('click', openLogs);
   if (els.closeSkillsBtn) els.closeSkillsBtn.addEventListener('click', closeSkillsPane);
   if (els.refreshSkillsBtn) els.refreshSkillsBtn.addEventListener('click', loadSkillsPane);
   if (els.saveSkillDirsBtn) els.saveSkillDirsBtn.addEventListener('click', saveSkillDirs);
+  els.settingsTabs.forEach((button) => {
+    button.addEventListener('click', () => setSettingsTab(button.dataset.settingsTab || 'model'));
+  });
   if (els.sessionsModal) els.sessionsModal.addEventListener('mousedown', (event) => {
     if (event.target === els.sessionsModal) closeSessionsPane();
   });
@@ -155,27 +202,21 @@ function bindEvents() {
   if (els.settingsModal) els.settingsModal.addEventListener('mousedown', (event) => {
     if (event.target === els.settingsModal) closeSettings();
   });
-
-  els.chooseWorkspaceBtn.addEventListener('click', async () => {
-    try {
-      const result = await window.yolo.selectWorkspace();
-      state.workspaceRoot = result.workspaceRoot || '';
-      if (result.session) {
-        state.activeSession = result.session;
-        state.activeSessionId = result.session.id || state.activeSessionId;
-      }
-      state.sessions = state.sessions.map((session) => session.id === state.activeSessionId ? { ...session, title: 'New chat', workspaceRoot: state.workspaceRoot } : session);
-      clearMessages();
-      renderChrome();
-    } catch (error) {
-      addAssistantError(error);
-    }
+  if (els.concurrencyModal) els.concurrencyModal.addEventListener('mousedown', (event) => {
+    if (event.target === els.concurrencyModal) closeConcurrencyModal();
+  });
+  if (els.closeConcurrencyBtn) els.closeConcurrencyBtn.addEventListener('click', closeConcurrencyModal);
+  if (els.cancelConcurrencyBtn) els.cancelConcurrencyBtn.addEventListener('click', closeConcurrencyModal);
+  if (els.openSessionManagementBtn) els.openSessionManagementBtn.addEventListener('click', () => {
+    closeConcurrencyModal();
+    openSessionsPane('running');
   });
 
+  els.chooseWorkspaceBtn.addEventListener('click', chooseWorkspace);
   els.revealWorkspaceBtn.addEventListener('click', () => window.yolo.revealWorkspace());
   els.thinkingLevelSelect.addEventListener('change', updateSessionThinkingLevel);
-  els.settingsBtn.addEventListener('click', openSettings);
-  els.themeToggleBtn.addEventListener('click', toggleTheme);
+  els.settingsBtn.addEventListener('click', () => openSettings('model'));
+  if (els.themeToggleBtn) els.themeToggleBtn.addEventListener('click', toggleTheme);
   els.closeSettingsBtn.addEventListener('click', closeSettings);
   els.cancelSettingsBtn.addEventListener('click', closeSettings);
 
@@ -554,6 +595,8 @@ function applySessionPayload(payload = {}) {
   if (payload.active?.session) state.activeSession = payload.active.session;
   state.busy = !!payload.active?.busy;
   state.queues = payload.active?.queues || { steering: [], followUp: [] };
+  state.concurrency.runningSessions = state.sessions.filter((session) => session.busy);
+  state.concurrency.runningCount = state.concurrency.runningSessions.length;
 }
 
 async function createNewSession() {
@@ -561,7 +604,7 @@ async function createNewSession() {
     const payload = await window.yolo.createSession();
     applySessionPayload(payload);
     state.currentAssistant = null;
-    renderMessagesFromHistory(payload.active?.messages || []);
+    renderMessagesFromHistory(payload.active?.messages || [], { partialAssistantText: payload.active?.partialAssistantText || '' });
     renderChrome();
     setStatus('New session');
   } catch (error) {
@@ -577,7 +620,7 @@ async function selectSession(sessionId) {
     const payload = await window.yolo.selectSession(sessionId);
     applySessionPayload(payload);
     state.currentAssistant = null;
-    renderMessagesFromHistory(payload.active?.messages || []);
+    renderMessagesFromHistory(payload.active?.messages || [], { partialAssistantText: payload.active?.partialAssistantText || '' });
     renderChrome();
     setStatus(state.busy ? 'Working…' : 'Ready');
     return true;
@@ -596,23 +639,87 @@ function toggleSidebar() {
 function applySidebarState() {
   if (!els.appShell) return;
   els.appShell.classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
-  if (els.collapseSidebarBtn) {
-    els.collapseSidebarBtn.textContent = state.sidebarCollapsed ? '›' : '‹';
-    els.collapseSidebarBtn.title = state.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
-    els.collapseSidebarBtn.setAttribute('aria-label', state.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
-    els.collapseSidebarBtn.setAttribute('aria-expanded', String(!state.sidebarCollapsed));
+  setChromeToggle(
+    els.collapseSidebarBtn,
+    state.sidebarCollapsed ? 'right' : 'left',
+    state.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+    !state.sidebarCollapsed
+  );
+}
+
+async function chooseWorkspace() {
+  try {
+    const result = await window.yolo.selectWorkspace();
+    applyWorkspaceResult(result);
+  } catch (error) {
+    addAssistantError(error);
   }
 }
 
-async function openSessionsPane() {
+async function handleWorkspaceSelectChange() {
+  const value = els.workspaceSelect?.value || '';
+  if (!value) return;
+
+  if (value === '__choose__') {
+    await chooseWorkspace();
+    renderWorkspaceSelect();
+    return;
+  }
+
+  const activeWorkspace = getActiveWorkspace();
+  if (samePath(value, activeWorkspace)) {
+    renderWorkspaceSelect();
+    return;
+  }
+
+  try {
+    const result = await window.yolo.setWorkspace(value);
+    applyWorkspaceResult(result);
+  } catch (error) {
+    addAssistantError(error);
+    renderWorkspaceSelect();
+  }
+}
+
+function applyWorkspaceResult(result = {}) {
+  const previousWorkspace = getActiveWorkspace();
+  const previousSessionId = state.activeSessionId;
+  const nextWorkspace = result.workspaceRoot || state.workspaceRoot || '';
+  const nextSessionId = result.session?.id || state.activeSessionId;
+  const changed = !samePath(previousWorkspace, nextWorkspace) || nextSessionId !== previousSessionId;
+
+  state.workspaceRoot = nextWorkspace;
+  if (result.session) {
+    state.activeSession = result.session;
+    state.activeSessionId = result.session.id || state.activeSessionId;
+  }
+  state.sessions = state.sessions.map((session) => session.id === state.activeSessionId ? { ...session, title: 'New chat', workspaceRoot: state.workspaceRoot } : session);
+  if (changed) clearMessages();
+  renderChrome();
+}
+
+function setChromeToggle(button, direction, label, expanded) {
+  if (!button) return;
+  const chevron = button.querySelector('.chevron');
+  if (chevron) chevron.className = `chevron chevron-${direction}`;
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.setAttribute('aria-expanded', String(expanded));
+}
+
+async function openSessionsPane(tab = state.sessionBrowser.tab || 'all') {
   if (!els.sessionsModal) return;
   els.sessionsModal.classList.remove('hidden');
+  if (els.sessionsSearchInput) els.sessionsSearchInput.value = state.sessionBrowser.query || '';
+  setSessionsTab(tab);
   renderAllSessions();
+  renderRunningSessions();
 
   try {
     const payload = await window.yolo.listSessions();
     state.sessions = payload.sessions || state.sessions;
     state.activeSessionId = payload.activeSessionId || state.activeSessionId;
+    await refreshConcurrencyState();
     renderSessions();
   } catch (error) {
     setStatus(error.message || 'Failed to load sessions');
@@ -624,13 +731,11 @@ function closeSessionsPane() {
 }
 
 async function openSkillsPane() {
-  if (!els.skillsModal) return;
-  els.skillsModal.classList.remove('hidden');
-  await loadSkillsPane();
+  await openSettings('skills');
 }
 
 function closeSkillsPane() {
-  if (els.skillsModal) els.skillsModal.classList.add('hidden');
+  setSettingsTab('model', { loadSkills: false });
 }
 
 async function loadSkillsPane() {
@@ -813,14 +918,33 @@ function displayCompatibilityPreset(value) {
   return normalizeCompatibilityPreset(value) === 'local-basic' ? 'local basic' : 'openai';
 }
 
+function normalizeMaxConcurrency(value, fallback = 2) {
+  const number = Number.parseInt(String(value ?? ''), 10);
+  const fallbackNumber = Number.isFinite(Number(fallback)) ? Number(fallback) : 2;
+  const normalizedFallback = Math.min(8, Math.max(1, Math.round(fallbackNumber)));
+  if (!Number.isFinite(number)) return normalizedFallback;
+  return Math.min(8, Math.max(1, number));
+}
+
+function normalizeGuardrailsMode(value) {
+  const raw = String(value || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  if (raw === 'off' || raw === 'yolo' || raw === 'disabled' || raw === 'disable' || raw === 'none' || raw === 'false' || raw === '0') return 'off';
+  return 'ask';
+}
+
+function getGuardrailsMode(settings = state.settings) {
+  return normalizeGuardrailsMode(settings?.guardrails?.mode || settings?.guardrailsMode || 'ask');
+}
+
 function renderChrome() {
   applyTheme(state.theme);
   updateBusyUi();
   renderQueue();
   renderSessions();
 
-  const activeWorkspace = state.activeSession?.workspaceRoot || state.workspaceRoot || state.homeBaseRoot;
+  const activeWorkspace = getActiveWorkspace();
   const workspaceTitle = displayWorkspaceName(activeWorkspace);
+  renderWorkspaceSelect(activeWorkspace);
   if (activeWorkspace) {
     if (els.workspacePath) {
       els.workspacePath.textContent = activeWorkspace;
@@ -846,20 +970,80 @@ function renderChrome() {
       els.modelName.textContent = state.settings.model;
       els.modelName.classList.remove('empty');
     }
-    if (els.connectionChip) {
-      els.connectionChip.textContent = `${state.settings.model} · think ${displayThinkingLevel(thinkingLevel)} · ${displayCompatibilityPreset(state.settings.compatibilityPreset)}`;
-      els.connectionChip.classList.remove('muted');
-    }
   } else {
     if (els.modelName) {
       els.modelName.textContent = 'Not configured';
       els.modelName.classList.add('empty');
     }
-    if (els.connectionChip) {
-      els.connectionChip.textContent = 'configure model';
-      els.connectionChip.classList.add('muted');
-    }
   }
+}
+
+function getActiveWorkspace() {
+  return state.activeSession?.workspaceRoot || state.workspaceRoot || state.homeBaseRoot || '';
+}
+
+function renderWorkspaceSelect(activeWorkspace = getActiveWorkspace()) {
+  if (!els.workspaceSelect) return;
+
+  const selected = activeWorkspace || '';
+  const choices = getWorkspaceChoices(selected);
+  const labelBudget = getWorkspaceLabelBudget();
+  els.workspaceSelect.innerHTML = '';
+
+  if (!choices.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No folder selected';
+    els.workspaceSelect.appendChild(option);
+  }
+
+  for (const choice of choices) {
+    const option = document.createElement('option');
+    option.value = choice.path;
+    option.textContent = truncatePathFromLeft(choice.path, labelBudget);
+    option.title = choice.path;
+    els.workspaceSelect.appendChild(option);
+  }
+
+  const chooseOption = document.createElement('option');
+  chooseOption.value = '__choose__';
+  chooseOption.textContent = 'Choose another folder…';
+  els.workspaceSelect.appendChild(chooseOption);
+
+  els.workspaceSelect.value = selected;
+  els.workspaceSelect.title = selected || 'No folder selected';
+}
+
+function getWorkspaceChoices(activeWorkspace) {
+  const choices = [];
+  const add = (folderPath) => {
+    const pathValue = String(folderPath || '').trim();
+    if (!pathValue || choices.some((choice) => samePath(choice.path, pathValue))) return;
+    choices.push({ path: pathValue });
+  };
+
+  add(activeWorkspace);
+  add(state.workspaceRoot);
+  add(state.homeBaseRoot);
+  for (const session of getSessionsNewestFirst()) add(session.workspaceRoot);
+  return choices.slice(0, 24);
+}
+
+function getWorkspaceLabelBudget() {
+  const width = els.workspaceSelect?.clientWidth || 420;
+  return Math.max(28, Math.floor(width / 7.2));
+}
+
+function truncatePathFromLeft(folderPath, maxChars = 72) {
+  const text = String(folderPath || '').trim();
+  if (!text || text.length <= maxChars) return text || 'No folder selected';
+  const tailLength = Math.max(10, maxChars - 4);
+  let tail = text.slice(-tailLength);
+  const separatorIndex = tail.search(/[\\/]/);
+  if (separatorIndex > 0 && tail.length - separatorIndex >= Math.floor(tailLength * 0.65)) {
+    tail = tail.slice(separatorIndex);
+  }
+  return `....${tail}`;
 }
 
 function displayWorkspaceName(folderPath) {
@@ -871,7 +1055,8 @@ function displayWorkspaceName(folderPath) {
 
 function samePath(a, b) {
   if (!a || !b) return false;
-  return String(a).replace(/[\\/]+$/, '').toLowerCase() === String(b).replace(/[\\/]+$/, '').toLowerCase();
+  const normalize = (value) => String(value).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return normalize(a) === normalize(b);
 }
 
 function getSessionsNewestFirst() {
@@ -889,6 +1074,7 @@ function renderSessions() {
   if (!recentSessions.length) {
     els.sessionsList.innerHTML = '<div class="sessions-empty">No sessions yet</div>';
     renderAllSessions();
+    renderRunningSessions();
     return;
   }
 
@@ -897,20 +1083,321 @@ function renderSessions() {
     els.sessionsList.appendChild(createSessionItem(session));
   }
   renderAllSessions();
+  renderRunningSessions();
 }
 
 function renderAllSessions() {
   if (!els.allSessionsList) return;
 
+  const sessions = getFilteredSortedSessions();
   if (!state.sessions.length) {
-    els.allSessionsList.innerHTML = '<div class="sessions-empty">No sessions yet</div>';
+    els.allSessionsList.innerHTML = '<div class="sessions-empty table-empty">No sessions yet</div>';
+    return;
+  }
+  if (!sessions.length) {
+    els.allSessionsList.innerHTML = '<div class="sessions-empty table-empty">No matching sessions</div>';
     return;
   }
 
+  const table = document.createElement('table');
+  table.className = 'sessions-table';
+  table.appendChild(createSessionsTableHead());
+
+  const body = document.createElement('tbody');
+  for (const session of sessions) body.appendChild(createSessionTableRow(session));
+  table.appendChild(body);
+
   els.allSessionsList.innerHTML = '';
-  for (const session of getSessionsNewestFirst()) {
-    els.allSessionsList.appendChild(createSessionItem(session, { showWorkspace: true, closeOnSelect: true }));
+  els.allSessionsList.appendChild(table);
+}
+
+function setSessionsTab(tab = 'all') {
+  const nextTab = tab === 'running' ? 'running' : 'all';
+  state.sessionBrowser.tab = nextTab;
+  els.sessionsTabs.forEach((button) => {
+    const active = button.dataset.sessionsTab === nextTab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  els.sessionsPanels.forEach((panel) => {
+    const active = panel.dataset.sessionsPanel === nextTab;
+    panel.classList.toggle('active', active);
+    panel.classList.toggle('hidden', !active);
+  });
+  if (nextTab === 'running') refreshConcurrencyState();
+}
+
+async function refreshConcurrencyState() {
+  try {
+    const concurrency = await window.yolo.getConcurrencyState();
+    state.concurrency = {
+      ...state.concurrency,
+      ...normalizeConcurrencyState(concurrency)
+    };
+    renderRunningSessions();
+    return state.concurrency;
+  } catch (error) {
+    if (els.runningSessionsStatus) els.runningSessionsStatus.textContent = error.message || 'Failed to load running sessions';
+    return state.concurrency;
   }
+}
+
+async function waitForSendSlot(timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const concurrency = await refreshConcurrencyState();
+    if (concurrency.runningCount < concurrency.maxConcurrency) return true;
+    await delay(180);
+  }
+  return false;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeConcurrencyState(concurrency = {}) {
+  const runningSessions = Array.isArray(concurrency.runningSessions) ? concurrency.runningSessions : [];
+  const maxConcurrency = normalizeMaxConcurrency(concurrency.maxConcurrency, state.settings.maxConcurrency);
+  return {
+    maxConcurrency,
+    runningCount: Number.isFinite(Number(concurrency.runningCount)) ? Number(concurrency.runningCount) : runningSessions.length,
+    runningSessions,
+    canStart: concurrency.canStart !== false && runningSessions.length < maxConcurrency
+  };
+}
+
+function getRunningSessionsForDisplay() {
+  const byId = new Map();
+  for (const session of state.sessions || []) {
+    if (session?.busy) byId.set(session.id, session);
+  }
+  for (const session of state.concurrency.runningSessions || []) {
+    if (session?.id) byId.set(session.id, { ...(byId.get(session.id) || {}), ...session, busy: true });
+  }
+  return [...byId.values()];
+}
+
+function renderRunningSessions() {
+  if (!els.runningSessionsList) return;
+  const running = getRunningSessionsForDisplay();
+  const max = normalizeMaxConcurrency(state.concurrency.maxConcurrency, state.settings.maxConcurrency);
+  if (els.runningSessionsStatus) {
+    els.runningSessionsStatus.textContent = `${running.length} / ${max} sessions running. Terminate one here if you need a send slot now.`;
+  }
+
+  if (!running.length) {
+    els.runningSessionsList.innerHTML = '<div class="sessions-empty table-empty">No sessions are running.</div>';
+    return;
+  }
+
+  els.runningSessionsList.innerHTML = '';
+  for (const session of running) els.runningSessionsList.appendChild(createRunningSessionItem(session));
+}
+
+function createRunningSessionItem(session, options = {}) {
+  const item = document.createElement('div');
+  item.className = 'running-session-item';
+
+  const copy = document.createElement('div');
+  copy.className = 'running-session-copy';
+
+  const title = document.createElement('div');
+  title.className = 'running-session-title';
+  title.textContent = session.title || 'Running session';
+
+  const meta = document.createElement('div');
+  meta.className = 'running-session-meta';
+  meta.textContent = [displayWorkspaceName(session.workspaceRoot), session.sessionFile].filter(Boolean).join(' · ');
+  if (meta.textContent) meta.title = meta.textContent;
+
+  copy.appendChild(title);
+  copy.appendChild(meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'running-session-actions';
+
+  const viewBtn = document.createElement('button');
+  viewBtn.type = 'button';
+  viewBtn.className = 'button button-ghost';
+  viewBtn.textContent = 'View';
+  viewBtn.addEventListener('click', async () => {
+    await selectSession(session.id);
+    closeConcurrencyModal();
+    closeSessionsPane();
+  });
+  actions.appendChild(viewBtn);
+
+  const terminateBtn = document.createElement('button');
+  terminateBtn.type = 'button';
+  terminateBtn.className = 'button button-primary';
+  terminateBtn.textContent = options.pendingText ? 'Terminate & send' : 'Terminate';
+  terminateBtn.addEventListener('click', async () => {
+    terminateBtn.disabled = true;
+    await terminateSession(session.id, options.pendingText || '');
+  });
+  actions.appendChild(terminateBtn);
+
+  item.appendChild(copy);
+  item.appendChild(actions);
+  return item;
+}
+
+async function terminateSession(sessionId, pendingText = '') {
+  try {
+    setStatus('Terminating session…');
+    const result = await window.yolo.cancelRun(sessionId);
+    state.sessions = state.sessions.map((session) => session.id === sessionId ? { ...session, busy: false, status: 'idle' } : session);
+    if (state.activeSessionId === sessionId) {
+      state.busy = false;
+      restoreQueuedToEditor(result?.queued);
+      updateBusyUi();
+    }
+    await refreshConcurrencyState();
+    renderSessions();
+    setStatus('Session terminated');
+    if (pendingText) {
+      closeConcurrencyModal();
+      await waitForSendSlot();
+      await sendPrompt(pendingText);
+    }
+  } catch (error) {
+    addAssistantError(error);
+  }
+}
+
+function getFilteredSortedSessions() {
+  const query = normalizeSessionSearch(state.sessionBrowser.query);
+  const filtered = query
+    ? state.sessions.filter((session) => sessionMatchesQuery(session, query))
+    : [...state.sessions];
+
+  const sortKey = state.sessionBrowser.sortKey || 'date';
+  const direction = state.sessionBrowser.sortDir === 'asc' ? 1 : -1;
+  return filtered.sort((a, b) => compareSessionsForTable(a, b, sortKey) * direction || compareSessionsForTable(a, b, 'date') * -1);
+}
+
+function createSessionsTableHead() {
+  const head = document.createElement('thead');
+  const row = document.createElement('tr');
+  row.appendChild(createSessionSortHeader('Date', 'date'));
+  row.appendChild(createSessionSortHeader('Time', 'time'));
+  row.appendChild(createSessionSortHeader('Preview', 'preview'));
+  head.appendChild(row);
+  return head;
+}
+
+function createSessionSortHeader(label, key) {
+  const th = document.createElement('th');
+  th.scope = 'col';
+  th.className = `sessions-col-${key}`;
+  th.setAttribute('aria-sort', state.sessionBrowser.sortKey === key ? (state.sessionBrowser.sortDir === 'asc' ? 'ascending' : 'descending') : 'none');
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `sessions-sort-button${state.sessionBrowser.sortKey === key ? ' active' : ''}`;
+  button.textContent = label;
+  if (state.sessionBrowser.sortKey === key) {
+    const arrow = document.createElement('span');
+    arrow.className = 'sort-arrow';
+    arrow.textContent = state.sessionBrowser.sortDir === 'asc' ? '↑' : '↓';
+    button.appendChild(arrow);
+  }
+  button.addEventListener('click', () => toggleSessionSort(key));
+  th.appendChild(button);
+  return th;
+}
+
+function createSessionTableRow(session) {
+  const row = document.createElement('tr');
+  row.className = `session-table-row${session.id === state.activeSessionId ? ' active' : ''}${session.busy ? ' running' : ''}`;
+  row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  row.dataset.sessionId = session.id;
+
+  const date = document.createElement('td');
+  date.className = 'sessions-date-cell';
+  date.textContent = formatSessionDate(session.updatedAt || session.createdAt);
+
+  const time = document.createElement('td');
+  time.className = 'sessions-time-cell';
+  time.textContent = session.busy ? 'running' : formatSessionClock(session.updatedAt || session.createdAt);
+
+  const preview = document.createElement('td');
+  preview.className = 'sessions-preview-cell';
+  const title = document.createElement('div');
+  title.className = 'session-preview-title';
+  title.textContent = session.title || 'New chat';
+  const meta = document.createElement('div');
+  meta.className = 'session-preview-meta';
+  meta.textContent = [session.workspaceRoot, session.sessionFile].filter(Boolean).join(' · ');
+  if (meta.textContent) meta.title = meta.textContent;
+  preview.appendChild(title);
+  if (meta.textContent) preview.appendChild(meta);
+
+  row.appendChild(date);
+  row.appendChild(time);
+  row.appendChild(preview);
+
+  const select = async () => {
+    const selected = await selectSession(session.id);
+    if (selected) closeSessionsPane();
+  };
+  row.addEventListener('click', select);
+  row.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      select();
+    }
+  });
+  return row;
+}
+
+function toggleSessionSort(key) {
+  if (state.sessionBrowser.sortKey === key) {
+    state.sessionBrowser.sortDir = state.sessionBrowser.sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    state.sessionBrowser.sortKey = key;
+    state.sessionBrowser.sortDir = key === 'preview' ? 'asc' : 'desc';
+  }
+  renderAllSessions();
+}
+
+function compareSessionsForTable(a, b, key) {
+  if (key === 'preview') return getSessionPreviewText(a).localeCompare(getSessionPreviewText(b), undefined, { sensitivity: 'base' });
+  if (key === 'time') return getSessionTimeOfDay(a) - getSessionTimeOfDay(b);
+  return getSessionTimestamp(a) - getSessionTimestamp(b);
+}
+
+function sessionMatchesQuery(session, query) {
+  const haystack = normalizeSessionSearch([
+    session.title,
+    session.workspaceRoot,
+    session.sessionFile,
+    formatSessionDate(session.updatedAt || session.createdAt),
+    formatSessionClock(session.updatedAt || session.createdAt)
+  ].filter(Boolean).join(' '));
+  return query.split(' ').filter(Boolean).every((part) => haystack.includes(part));
+}
+
+function normalizeSessionSearch(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function getSessionPreviewText(session) {
+  return String(session?.title || 'New chat');
+}
+
+function getSessionTimestamp(session) {
+  const time = new Date(session?.updatedAt || session?.createdAt || 0).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function getSessionTimeOfDay(session) {
+  const date = new Date(session?.updatedAt || session?.createdAt || 0);
+  const time = date.getTime();
+  if (Number.isNaN(time)) return 0;
+  return date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
 }
 
 function createSessionItem(session, { showWorkspace = false, closeOnSelect = false } = {}) {
@@ -925,9 +1412,30 @@ function createSessionItem(session, { showWorkspace = false, closeOnSelect = fal
 
   const meta = document.createElement('div');
   meta.className = `session-item-meta${session.busy ? ' running' : ''}`;
-  const metaParts = [session.busy ? 'running' : formatSessionTime(session.updatedAt)];
-  if (showWorkspace && session.workspaceRoot) metaParts.push(displayWorkspaceName(session.workspaceRoot));
-  meta.textContent = metaParts.filter(Boolean).join(' · ');
+
+  const time = document.createElement('span');
+  time.className = 'session-item-time';
+  time.textContent = session.busy ? 'running' : formatSessionTime(session.updatedAt);
+  meta.appendChild(time);
+
+  const status = document.createElement('span');
+  status.className = `session-status-dot${session.busy ? ' running' : ''}`;
+  status.title = session.busy ? 'Running' : 'Ready';
+  status.setAttribute('aria-label', session.busy ? 'Session running' : 'Session ready');
+  meta.appendChild(status);
+
+  if (showWorkspace && session.workspaceRoot) {
+    const separator = document.createElement('span');
+    separator.className = 'session-item-separator';
+    separator.textContent = '·';
+
+    const workspace = document.createElement('span');
+    workspace.className = 'session-item-workspace';
+    workspace.textContent = displayWorkspaceName(session.workspaceRoot);
+
+    meta.appendChild(separator);
+    meta.appendChild(workspace);
+  }
 
   button.appendChild(title);
   button.appendChild(meta);
@@ -936,6 +1444,20 @@ function createSessionItem(session, { showWorkspace = false, closeOnSelect = fal
     if (selected && closeOnSelect) closeSessionsPane();
   });
   return button;
+}
+
+function formatSessionDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' }).format(date);
+}
+
+function formatSessionClock(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
 function formatSessionTime(value) {
@@ -964,7 +1486,7 @@ function updateBusyUi() {
   els.followUpBtn.classList.toggle('hidden', !state.busy);
   els.cancelBtn.classList.toggle('hidden', !state.busy);
   if (!state.busy) els.cancelBtn.disabled = false;
-  if (els.skillsModal && !els.skillsModal.classList.contains('hidden')) renderSkillsPane();
+  if (isSettingsTabActive('skills')) renderSkillsPane();
 }
 
 async function primaryAction() {
@@ -980,11 +1502,57 @@ async function primaryAction() {
   return sendPrompt(text);
 }
 
+async function ensureCanSendNow(text) {
+  try {
+    const concurrency = await window.yolo.getConcurrencyState();
+    state.concurrency = {
+      ...state.concurrency,
+      ...normalizeConcurrencyState(concurrency),
+      pendingText: text
+    };
+    renderRunningSessions();
+    if (state.concurrency.runningCount < state.concurrency.maxConcurrency) return true;
+    openConcurrencyModal(text);
+    return false;
+  } catch (error) {
+    setStatus(error.message || 'Failed to check session concurrency');
+    return true;
+  }
+}
+
+function openConcurrencyModal(pendingText) {
+  if (!els.concurrencyModal) return;
+  const running = getRunningSessionsForDisplay();
+  const max = normalizeMaxConcurrency(state.concurrency.maxConcurrency, state.settings.maxConcurrency);
+  state.concurrency.pendingText = pendingText;
+  if (els.concurrencyModalSummary) {
+    els.concurrencyModalSummary.textContent = `${running.length} / ${max} sessions are running. Terminate one blocking session to send this message now, or cancel and wait.`;
+  }
+  if (els.concurrencyBlockersList) {
+    els.concurrencyBlockersList.innerHTML = '';
+    if (!running.length) {
+      els.concurrencyBlockersList.innerHTML = '<div class="sessions-empty table-empty">No blocking sessions found. Try Send again.</div>';
+    } else {
+      for (const session of running) els.concurrencyBlockersList.appendChild(createRunningSessionItem(session, { pendingText }));
+    }
+  }
+  els.concurrencyModal.classList.remove('hidden');
+}
+
+function closeConcurrencyModal() {
+  if (els.concurrencyModal) els.concurrencyModal.classList.add('hidden');
+  state.concurrency.pendingText = '';
+}
+
 async function sendPrompt(providedText) {
   const text = (providedText ?? getPromptText()).trim();
   if (!text || state.busy) return;
 
+  const canSend = await ensureCanSendNow(text);
+  if (!canSend) return;
+
   const runSessionId = state.activeSessionId;
+  state.stickToBottom = true;
   state.busy = true;
   updateBusyUi();
   clearPrompt();
@@ -992,7 +1560,7 @@ async function sendPrompt(providedText) {
   setStatus('Thinking…');
 
   removeWelcome();
-  addMessage('user', text);
+  const optimisticUser = addMessage('user', text);
   state.currentAssistant = addAssistantShell();
 
   try {
@@ -1002,8 +1570,19 @@ async function sendPrompt(providedText) {
       state.currentAssistant.content.innerHTML = renderText(response.content || '(no response)');
     }
   } catch (error) {
-    if (state.activeSessionId === runSessionId) {
-      ensureAssistantShell().content.innerHTML = `<span class="error-text">${escapeHtml(displayError(error))}</span>`;
+    const errorText = displayError(error);
+    if (/max concurrent sessions reached/i.test(errorText)) {
+      if (state.activeSessionId === runSessionId) {
+        setPromptText(text);
+        autoGrowPrompt();
+        if (state.currentAssistant && isAssistantShellEmpty(state.currentAssistant)) state.currentAssistant.message.remove();
+        optimisticUser?.message?.remove();
+        state.currentAssistant = null;
+        await refreshConcurrencyState();
+        openConcurrencyModal(text);
+      }
+    } else if (state.activeSessionId === runSessionId) {
+      ensureAssistantShell().content.innerHTML = `<span class="error-text">${escapeHtml(errorText)}</span>`;
       setStatus('Error');
     }
   } finally {
@@ -1225,6 +1804,8 @@ function handleAgentEvent(event) {
 
   if (event.type === 'sessions:update') {
     state.sessions = event.sessions || [];
+    state.concurrency.runningSessions = state.sessions.filter((session) => session.busy);
+    state.concurrency.runningCount = state.concurrency.runningSessions.length;
     const active = state.sessions.find((session) => session.id === state.activeSessionId);
     if (active) {
       state.activeSession = active;
@@ -1232,6 +1813,8 @@ function handleAgentEvent(event) {
       updateBusyUi();
     }
     renderSessions();
+    renderWorkspaceSelect();
+    renderRunningSessions();
     return;
   }
 
@@ -1435,14 +2018,37 @@ function summarizeArgs(name, args = {}) {
   return '';
 }
 
-function openSettings() {
+async function openSettings(tab = 'model') {
   els.apiBaseUrlInput.value = state.settings.apiBaseUrl || '';
   els.apiKeyInput.value = state.settings.apiKey || '';
   els.modelInput.value = state.settings.model || '';
   els.settingsThinkingLevelInput.value = normalizeThinkingLevel(state.settings.thinkingLevel);
   if (els.compatibilityPresetInput) els.compatibilityPresetInput.value = normalizeCompatibilityPreset(state.settings.compatibilityPreset);
+  if (els.maxConcurrencyInput) els.maxConcurrencyInput.value = normalizeMaxConcurrency(state.settings.maxConcurrency);
+  if (els.guardrailsModeInput) els.guardrailsModeInput.value = getGuardrailsMode();
   els.settingsModal.classList.remove('hidden');
-  els.apiBaseUrlInput.focus();
+  await setSettingsTab(typeof tab === 'string' ? tab : 'model');
+  if (tab === 'model') els.apiBaseUrlInput.focus();
+}
+
+function isSettingsTabActive(tab) {
+  return !!els.settingsPanels.find((panel) => panel.dataset.settingsPanel === tab && !panel.classList.contains('hidden'));
+}
+
+async function setSettingsTab(tab = 'model', options = {}) {
+  const nextTab = ['model', 'skills', 'appearance', 'logs'].includes(tab) ? tab : 'model';
+  els.settingsTabs.forEach((button) => {
+    const active = button.dataset.settingsTab === nextTab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  els.settingsPanels.forEach((panel) => {
+    const active = panel.dataset.settingsPanel === nextTab;
+    panel.classList.toggle('active', active);
+    panel.classList.toggle('hidden', !active);
+  });
+
+  if (nextTab === 'skills' && options.loadSkills !== false) await loadSkillsPane();
 }
 
 async function openLogs() {
@@ -1469,7 +2075,12 @@ function applyTheme(theme) {
 
   if (els.themeToggleBtn) {
     const isLight = state.theme === 'light';
-    els.themeToggleBtn.textContent = isLight ? '☀ Light' : '☾ Dark';
+    const label = isLight ? 'Switch to dark mode' : 'Switch to light mode';
+    const status = els.themeToggleBtn.querySelector('span');
+    if (status) status.textContent = isLight ? 'Light mode' : 'Dark mode';
+    else els.themeToggleBtn.textContent = isLight ? 'Light mode' : 'Dark mode';
+    els.themeToggleBtn.title = label;
+    els.themeToggleBtn.setAttribute('aria-label', label);
     els.themeToggleBtn.setAttribute('aria-pressed', String(isLight));
   }
 }
@@ -1480,12 +2091,18 @@ async function saveSettings() {
     apiKey: els.apiKeyInput.value.trim(),
     model: els.modelInput.value.trim(),
     thinkingLevel: normalizeThinkingLevel(els.settingsThinkingLevelInput.value),
-    compatibilityPreset: normalizeCompatibilityPreset(els.compatibilityPresetInput?.value)
+    compatibilityPreset: normalizeCompatibilityPreset(els.compatibilityPresetInput?.value),
+    maxConcurrency: normalizeMaxConcurrency(els.maxConcurrencyInput?.value, state.settings.maxConcurrency),
+    guardrails: {
+      mode: normalizeGuardrailsMode(els.guardrailsModeInput?.value)
+    }
   };
 
   try {
     state.settings = await window.yolo.saveSettings(next);
+    state.concurrency.maxConcurrency = normalizeMaxConcurrency(state.settings.maxConcurrency);
     renderChrome();
+    renderRunningSessions();
     closeSettings();
     setStatus('Settings saved');
   } catch (error) {
@@ -1496,10 +2113,34 @@ async function saveSettings() {
 function autoGrowPrompt() {
   els.promptInput.style.height = 'auto';
   els.promptInput.style.height = `${Math.min(180, Math.max(42, els.promptInput.scrollHeight))}px`;
+  updateReturnToBottomButton();
 }
 
 function setStatus(message) {
-  els.statusText.textContent = message || 'Ready';
+  const text = message || 'Ready';
+  els.statusText.textContent = text;
+  updateStatusIndicator(text);
+}
+
+function updateStatusIndicator(message) {
+  if (!els.statusIndicator) return;
+  const level = getStatusLevel(message);
+  els.statusIndicator.classList.toggle('status-ok', level === 'ok');
+  els.statusIndicator.classList.toggle('status-warn', level === 'warn');
+  els.statusIndicator.classList.toggle('status-error', level === 'error');
+  els.statusIndicator.classList.toggle('status-working', level === 'warn' && isWorkingStatus(message));
+}
+
+function getStatusLevel(message) {
+  const text = String(message || '').toLowerCase();
+  if (/error|failed|failure|blocked|denied|cancelled|canceled|not found/.test(text)) return 'error';
+  if (/thinking|working|running|queue|cancell?ing|compact|retrying|waiting|preparing|loading|saving|refreshing|approv/.test(text)) return 'warn';
+  return 'ok';
+}
+
+function isWorkingStatus(message) {
+  const text = String(message || '').toLowerCase();
+  return state.busy || /thinking|working|running|queue|cancell?ing|compact|retrying|waiting|preparing|loading|saving|refreshing/.test(text);
 }
 
 function parseSkillBlock(text) {
@@ -1513,7 +2154,8 @@ function parseSkillBlock(text) {
   };
 }
 
-function renderMessagesFromHistory(messages = []) {
+function renderMessagesFromHistory(messages = [], options = {}) {
+  const partialAssistantText = String(options.partialAssistantText || '').trim();
   els.messages.innerHTML = '';
   state.currentAssistant = null;
 
@@ -1548,14 +2190,19 @@ function renderMessagesFromHistory(messages = []) {
     return;
   }
 
-  if (state.busy && lastDisplayRole !== 'assistant') {
-    state.currentAssistant = addAssistantShell();
+  if (state.busy) {
+    if (lastDisplayRole !== 'assistant') state.currentAssistant = addAssistantShell();
+    if (partialAssistantText) {
+      const shell = state.currentAssistant || addAssistantShell();
+      shell.content.innerHTML = renderText(partialAssistantText);
+    }
   }
 
-  scrollToBottom();
+  scrollToBottom({ force: true });
 }
 
 function clearMessages() {
+  state.stickToBottom = true;
   els.messages.innerHTML = '';
   const welcome = document.createElement('div');
   welcome.className = 'welcome-card';
@@ -1571,6 +2218,7 @@ function clearMessages() {
   `;
   els.messages.appendChild(welcome);
   bindExamplePrompts(welcome);
+  scrollToBottom({ force: true });
 }
 
 function removeWelcome() {
@@ -1578,9 +2226,37 @@ function removeWelcome() {
   if (welcome) welcome.remove();
 }
 
-function scrollToBottom() {
+function handleMessagesScroll() {
+  state.stickToBottom = isNearBottom();
+  updateReturnToBottomButton();
+}
+
+function isNearBottom() {
+  if (!els.messages) return true;
+  const distance = els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight;
+  return distance <= BOTTOM_SCROLL_THRESHOLD;
+}
+
+function updateReturnToBottomButton() {
+  if (!els.returnToBottomBtn || !els.messages) return;
+  const canScroll = els.messages.scrollHeight > els.messages.clientHeight + BOTTOM_SCROLL_THRESHOLD;
+  const show = canScroll && !isNearBottom();
+  els.returnToBottomBtn.classList.toggle('hidden', !show);
+  if (els.composerWrap) {
+    els.returnToBottomBtn.style.bottom = `${els.composerWrap.offsetHeight + 18}px`;
+  }
+}
+
+function scrollToBottom(options = {}) {
+  const force = options === true || options.force === true;
+  if (force) state.stickToBottom = true;
+
   requestAnimationFrame(() => {
-    els.messages.scrollTop = els.messages.scrollHeight;
+    if (force || state.stickToBottom || isNearBottom()) {
+      els.messages.scrollTop = els.messages.scrollHeight;
+      state.stickToBottom = true;
+    }
+    updateReturnToBottomButton();
   });
 }
 

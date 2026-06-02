@@ -1,6 +1,8 @@
 const fs = require('node:fs/promises');
 const fssync = require('node:fs');
 const path = require('node:path');
+const { shouldAskCommandApproval } = require('./command-guardrails');
+const { normalizeMaxConcurrency } = require('./settings');
 
 const PI_PROVIDER = 'yolo-openai-compatible';
 const DEFAULT_MODEL = 'gpt-4.1-mini';
@@ -13,18 +15,20 @@ const EMPTY_RESPONSE_RETRY_PROMPT = 'The previous turn produced no user-visible 
 const MODEL_COMPATIBILITY_PRESETS = new Set(['openai', 'local-basic']);
 
 class PiSdkSessionManager {
-  constructor({ userDataDir, agentDir, getSettings, getDefaultWorkspaceRoot, emit, log }) {
+  constructor({ userDataDir, agentDir, getSettings, getDefaultWorkspaceRoot, emit, requestCommandApproval, log }) {
     this.userDataDir = userDataDir;
     this.agentDir = agentDir;
     this.sessionDir = path.join(userDataDir, 'pi-sessions');
     this.getSettings = getSettings;
     this.getDefaultWorkspaceRoot = getDefaultWorkspaceRoot;
     this.emit = emit || (() => {});
+    this.requestCommandApproval = typeof requestCommandApproval === 'function' ? requestCommandApproval : async () => false;
     this.log = typeof log === 'function' ? log : () => {};
     this.sdkPromise = null;
     this.typeboxPromise = null;
     this.customToolsPromise = null;
     this.active = null;
+    this.runtimes = new Map();
     this.sessionIndex = new Map();
     this.browserTabs = new Map();
     this.browserNextTabId = 1;
@@ -40,23 +44,49 @@ class PiSdkSessionManager {
     return this.typeboxPromise;
   }
 
-  async ensureSession(preferredIdOrPath) {
-    if (this.active && (!preferredIdOrPath || this.matchesActive(preferredIdOrPath))) {
-      return this.activeSummary();
+  async ensureSession(preferredIdOrPath, options = {}) {
+    const runtime = await this.ensureRuntime(preferredIdOrPath, options);
+    return this.runtimeSummary(runtime);
+  }
+
+  async ensureRuntime(preferredIdOrPath, options = {}) {
+    const select = options.select !== false;
+    const preferred = String(preferredIdOrPath || '').trim();
+    const existing = preferred ? this.findRuntime(preferred) : this.active;
+    if (existing) {
+      if (select) this.setSelectedRuntime(existing);
+      return existing;
     }
 
     const sdk = await this.sdk();
     await fs.mkdir(this.sessionDir, { recursive: true });
 
     let piSessionManager;
-    const target = await this.resolveSessionTarget(preferredIdOrPath);
+    const target = await this.resolveSessionTarget(preferred);
     if (target?.path) {
+      const loaded = this.findRuntime(target.id || target.path);
+      if (loaded) {
+        if (select) this.setSelectedRuntime(loaded);
+        return loaded;
+      }
       piSessionManager = sdk.SessionManager.open(target.path, this.sessionDir);
     } else {
       piSessionManager = sdk.SessionManager.continueRecent(this.getDefaultWorkspaceRoot() || process.cwd(), this.sessionDir);
     }
 
-    return this.activatePiSessionManager(piSessionManager, { reason: 'startup' });
+    const managerId = typeof piSessionManager.getSessionId === 'function' ? piSessionManager.getSessionId() : '';
+    const loaded = managerId ? this.findRuntime(managerId) : null;
+    if (loaded) {
+      if (select) this.setSelectedRuntime(loaded);
+      return loaded;
+    }
+
+    const summary = await this.activatePiSessionManager(piSessionManager, {
+      reason: options.reason || 'startup',
+      thinkingLevel: options.thinkingLevel,
+      select
+    });
+    return this.findRuntime(summary?.id) || this.active;
   }
 
   async createSession({ workspaceRoot, thinkingLevel } = {}) {
@@ -66,7 +96,8 @@ class PiSdkSessionManager {
     const piSessionManager = sdk.SessionManager.create(cwd, this.sessionDir);
     const summary = await this.activatePiSessionManager(piSessionManager, {
       reason: 'new',
-      thinkingLevel: toPiThinkingLevel(thinkingLevel, this.getSettings()?.thinkingLevel)
+      thinkingLevel: toPiThinkingLevel(thinkingLevel, this.getSettings()?.thinkingLevel),
+      select: true
     });
     this.emitSessionsChanged();
     return summary;
@@ -87,14 +118,15 @@ class PiSdkSessionManager {
     this.sessionIndex = new Map(sessions.map((info) => [info.id, info]));
 
     const summaries = sessions.map((info) => this.sessionInfoToSummary(info));
-    if (this.active && !summaries.some((session) => session.id === this.active.id)) {
-      summaries.unshift(this.activeSummary());
+    for (const runtime of this.runtimes.values()) {
+      if (!summaries.some((session) => session.id === runtime.id)) summaries.unshift(this.runtimeSummary(runtime));
     }
     return summaries;
   }
 
   async getSession(id) {
-    if (this.active && this.matchesActive(id)) return this.activeSummary();
+    const runtime = this.findRuntime(id);
+    if (runtime) return this.runtimeSummary(runtime);
     const info = await this.getSessionInfo(id);
     return info ? this.sessionInfoToSummary(info) : null;
   }
@@ -159,20 +191,20 @@ class PiSdkSessionManager {
   }
 
   async getPayload(id) {
-    if (!this.active || (id && !this.matchesActive(id))) {
-      await this.ensureSession(id);
-    }
+    const active = await this.ensureRuntime(id, { select: true });
 
     return {
-      session: this.activeSummary(),
-      messages: this.getActiveRendererMessages(),
-      queues: this.queueSnapshot(),
-      busy: !!this.active?.session?.isStreaming
+      session: this.runtimeSummary(active),
+      messages: this.getRendererMessages(active),
+      queues: this.queueSnapshot(active),
+      busy: !!(active?.session?.isStreaming || active?.runInProgress),
+      partialAssistantText: active?.currentAssistantText || ''
     };
   }
 
   async updateSessionWorkspace(id, workspaceRoot) {
-    if (this.active?.session?.isStreaming) {
+    const runtime = this.findRuntime(id || this.active?.id);
+    if (runtime?.session?.isStreaming || runtime?.runInProgress) {
       throw new Error('Cancel the running session before changing folders.');
     }
 
@@ -181,7 +213,7 @@ class PiSdkSessionManager {
 
   async run(id, text) {
     const active = await this.requireActive(id);
-    if (active.session.isStreaming) {
+    if (active.session.isStreaming || active.runInProgress) {
       if (isStopCommandText(text)) {
         await this.cancel(id);
         return { content: 'Cancelled.', cancelled: true };
@@ -189,22 +221,31 @@ class PiSdkSessionManager {
       throw new Error('Agent is already running. Use steer or follow-up while it works.');
     }
 
-    const localCommand = await this.tryRunLocalCommand(active, text);
-    if (localCommand) return localCommand;
+    if (!this.canStartRun(active.id)) {
+      const concurrency = this.getConcurrencyState();
+      throw new Error(`Max concurrent sessions reached (${concurrency.runningCount}/${concurrency.maxConcurrency}). Terminate a running session from Session Management, or wait for one to finish.`);
+    }
 
-    active.initialPromptText = String(text || '').trim();
+    active.runInProgress = true;
+    active.initialPromptText = '';
     active.initialUserSeen = false;
-    active.currentAssistantText = '';
-    active.lastAssistantText = '';
-    active.seenSkillKeys = new Set();
-    active.suppressedUserTexts = new Set();
-    active.cancelRequested = false;
-    active.emptyResponseRetried = false;
-
-    this.emit({ type: 'status', message: `Thinking (${displayPiThinkingLevel(active.session.thinkingLevel)})…`, sessionId: active.id });
     this.emitSessionsChanged();
 
     try {
+      const localCommand = await this.tryRunLocalCommand(active, text);
+      if (localCommand) return localCommand;
+
+      active.initialPromptText = String(text || '').trim();
+      active.initialUserSeen = false;
+      active.currentAssistantText = '';
+      active.lastAssistantText = '';
+      active.seenSkillKeys = new Set();
+      active.suppressedUserTexts = new Set();
+      active.cancelRequested = false;
+      active.emptyResponseRetried = false;
+
+      this.emit({ type: 'status', message: `Thinking (${displayPiThinkingLevel(active.session.thinkingLevel)})…`, sessionId: active.id });
+
       await active.session.prompt(active.initialPromptText, { source: 'interactive' });
       let content = getActiveLastAssistantText(active);
 
@@ -222,6 +263,7 @@ class PiSdkSessionManager {
 
       return { content };
     } finally {
+      active.runInProgress = false;
       active.initialPromptText = '';
       active.initialUserSeen = false;
       this.emitSessionsChanged();
@@ -236,6 +278,15 @@ class PiSdkSessionManager {
       const excludeFromContext = input.startsWith('!!');
       const command = input.slice(excludeFromContext ? 2 : 1).trim();
       if (!command) return null;
+
+      const approval = await this.ensureCommandApproved(active, command, 'local ! command');
+      if (!approval.approved) {
+        content = formatGuardrailBlockedMessage(command, approval.decision);
+        active.lastAssistantText = content;
+        this.emit({ type: 'assistant:content', content, sessionId: active.id });
+        this.emit({ type: 'status', message: 'Command blocked by AI Guardrails', sessionId: active.id });
+        return { content, blocked: true };
+      }
 
       let streamed = '';
       this.emit({ type: 'status', message: 'Running command…', sessionId: active.id });
@@ -286,16 +337,56 @@ class PiSdkSessionManager {
     return { content };
   }
 
+  async ensureCommandApproved(active, command, source) {
+    const decision = shouldAskCommandApproval(command, this.getSettings() || {}, {
+      cwd: active?.cwd || this.getDefaultWorkspaceRoot() || process.cwd()
+    });
+
+    if (!decision.requiresApproval) return { approved: true, decision };
+
+    const sessionId = active?.id || this.active?.id || '';
+    this.log('warn', 'guardrails:command-needs-approval', {
+      sessionId,
+      source,
+      rule: decision.rule,
+      reason: decision.reason,
+      command
+    });
+    this.emit({ type: 'status', message: 'Waiting for AI Guardrails approval…', sessionId });
+
+    let approved = false;
+    try {
+      approved = await this.requestCommandApproval({
+        command,
+        reason: decision.reason,
+        rule: decision.rule,
+        source,
+        cwd: active?.cwd || this.getDefaultWorkspaceRoot() || process.cwd(),
+        sessionId
+      });
+    } catch (error) {
+      this.log('error', 'guardrails:approval-failed', { error: error?.message || String(error), sessionId, source });
+      approved = false;
+    }
+
+    this.emit({
+      type: 'status',
+      message: approved ? 'Command approved' : 'Command blocked by AI Guardrails',
+      sessionId
+    });
+    return { approved, decision };
+  }
+
   async queueSteer(id, text) {
     const active = await this.requireActive(id);
     await active.session.steer(String(text || '').trim());
-    return this.queueSnapshot();
+    return this.queueSnapshot(active);
   }
 
   async queueFollowUp(id, text) {
     const active = await this.requireActive(id);
     await active.session.followUp(String(text || '').trim());
-    return this.queueSnapshot();
+    return this.queueSnapshot(active);
   }
 
   async updateSessionThinkingLevel(id, thinkingLevel) {
@@ -307,40 +398,48 @@ class PiSdkSessionManager {
         : toPiThinkingLevel(thinkingLevel, this.getSettings()?.thinkingLevel)
     );
     this.emitSessionsChanged();
-    return this.activeSummary();
+    return this.runtimeSummary(active);
   }
 
   async cancel(id) {
-    const active = await this.requireActive(id);
+    const active = await this.requireActive(id, { select: false });
     active.cancelRequested = true;
     const queued = active.session.clearQueue();
     await active.session.abort();
+    active.runInProgress = false;
     this.emitSessionsChanged();
-    return { ok: true, busy: active.session.isStreaming, queued };
+    return { ok: true, busy: !!(active.session.isStreaming || active.runInProgress), queued };
   }
 
   async reset(id) {
     const active = await this.requireActive(id);
-    if (active.session.isStreaming) await active.session.abort();
+    if (active.session.isStreaming || active.runInProgress) await active.session.abort();
     return this.createSession({ workspaceRoot: active.cwd, thinkingLevel: active.session.thinkingLevel });
   }
 
   async reloadActive() {
     if (!this.active?.sessionFile) return this.activeSummary();
-    if (this.active.session.isStreaming) throw new Error('Cancel the running session before changing model settings.');
+    if (this.hasBusySessions()) throw new Error('Cancel running sessions before changing model settings.');
 
     const sdk = await this.sdk();
-    const piSessionManager = sdk.SessionManager.open(this.active.sessionFile, this.sessionDir);
-    return this.activatePiSessionManager(piSessionManager, { reason: 'resume' });
+    const previousId = this.active.id;
+    const previousSessionFile = this.active.sessionFile;
+    for (const runtime of [...this.runtimes.values()]) this.disposeRuntime(runtime);
+    this.closeBrowserTabs();
+    const piSessionManager = sdk.SessionManager.open(previousSessionFile, this.sessionDir);
+    const summary = await this.activatePiSessionManager(piSessionManager, { reason: 'resume', select: true });
+    if (summary?.id !== previousId) this.log('warn', 'pi:session:reload-id-changed', { previousId, nextId: summary?.id });
+    return summary;
   }
 
   async deleteSession(id) {
     const info = await this.getSessionInfo(id);
     if (!info) return { ok: false };
 
-    if (this.active && this.matchesActive(info.id)) {
-      if (this.active.session.isStreaming) throw new Error('Cancel the running session before deleting it.');
-      this.disposeActive();
+    const runtime = this.findRuntime(info.id);
+    if (runtime) {
+      if (runtime.session.isStreaming || runtime.runInProgress) throw new Error('Cancel the running session before deleting it.');
+      this.disposeRuntime(runtime);
     }
 
     await fs.unlink(info.path).catch((error) => {
@@ -352,25 +451,29 @@ class PiSdkSessionManager {
   }
 
   async getSessionWorkspace(id) {
-    if (this.active && (!id || this.matchesActive(id))) return this.active.cwd;
+    const runtime = this.findRuntime(id || this.active?.id);
+    if (runtime) return runtime.cwd;
     const info = await this.getSessionInfo(id);
     return info?.cwd || this.getDefaultWorkspaceRoot() || '';
   }
 
-  async activatePiSessionManager(piSessionManager, { reason = 'startup', thinkingLevel } = {}) {
-    if (this.active?.session?.isStreaming) {
-      throw new Error('Cancel the running session before switching sessions.');
+  async activatePiSessionManager(piSessionManager, { reason = 'startup', thinkingLevel, select = true } = {}) {
+    const existing = this.findRuntime(typeof piSessionManager.getSessionId === 'function' ? piSessionManager.getSessionId() : '');
+    if (existing) {
+      if (select) this.setSelectedRuntime(existing);
+      return this.runtimeSummary(existing);
     }
 
     const previousSessionFile = this.active?.sessionFile;
-    this.disposeActive();
+    const runtimeRef = { current: null };
 
     const cwd = piSessionManager.getCwd() || this.getDefaultWorkspaceRoot() || process.cwd();
     const { session } = await this.createAgentSessionForManager(piSessionManager, {
       cwd,
       reason,
       previousSessionFile,
-      thinkingLevel
+      thinkingLevel,
+      runtimeRef
     });
 
     const active = {
@@ -387,11 +490,14 @@ class PiSdkSessionManager {
       seenSkillKeys: new Set(),
       suppressedUserTexts: new Set(),
       cancelRequested: false,
-      emptyResponseRetried: false
+      emptyResponseRetried: false,
+      runInProgress: false
     };
 
+    runtimeRef.current = active;
     active.unsubscribe = session.subscribe((event) => this.handlePiEvent(event, active));
-    this.active = active;
+    this.runtimes.set(active.id, active);
+    if (select) this.setSelectedRuntime(active);
 
     await session.bindExtensions({
       onError: (error) => {
@@ -405,12 +511,12 @@ class PiSdkSessionManager {
       session.setThinkingLevel(compatibilityPreset === 'local-basic' ? 'off' : toPiThinkingLevel(thinkingLevel));
     }
 
-    this.log('info', 'pi:session:active', { sessionId: active.id, sessionFile: active.sessionFile, cwd });
+    this.log('info', select ? 'pi:session:selected' : 'pi:session:loaded', { sessionId: active.id, sessionFile: active.sessionFile, cwd });
     this.emitSessionsChanged();
-    return this.activeSummary();
+    return this.runtimeSummary(active);
   }
 
-  async createAgentSessionForManager(piSessionManager, { cwd, reason, previousSessionFile, thinkingLevel }) {
+  async createAgentSessionForManager(piSessionManager, { cwd, reason, previousSessionFile, thinkingLevel, runtimeRef }) {
     const sdk = await this.sdk();
     const settings = this.getSettings() || {};
     const apiBaseUrl = String(settings.apiBaseUrl || DEFAULT_BASE_URL).trim() || DEFAULT_BASE_URL;
@@ -471,12 +577,12 @@ class PiSdkSessionManager {
       agentsFilesOverride: (base) => this.appendSoulContext(base, cwd),
       appendSystemPromptOverride: (base) => [
         ...base,
-        'You are running inside YOLO Auto Desktop. Use the full Pi coding-agent toolset for software work. Be production-minded: inspect before editing, prefer exact patches, run relevant checks, explain changes concisely, and ask before destructive actions.'
+        'You are running inside YOLO Auto Desktop. Use the full Pi coding-agent toolset for software work. Be production-minded: inspect before editing, prefer exact patches, run relevant checks, explain changes concisely, and ask before destructive actions. The app may require approval before extremely dangerous shell commands unless AI Guardrails are set to YOLO mode.'
       ]
     });
     await resourceLoader.reload();
 
-    const customTools = await this.createCustomTools();
+    const customTools = await this.createCustomTools(cwd, settingsManager, runtimeRef);
     return sdk.createAgentSession({
       cwd,
       agentDir: this.agentDir,
@@ -518,15 +624,41 @@ class PiSdkSessionManager {
     return { agentsFiles };
   }
 
-  async createCustomTools() {
-    if (this.customToolsPromise) return this.customToolsPromise;
-    this.customToolsPromise = this.buildCustomTools();
-    return this.customToolsPromise;
+  async createCustomTools(cwd, settingsManager, runtimeRef) {
+    return this.buildCustomTools(cwd, settingsManager, runtimeRef);
   }
 
-  async buildCustomTools() {
+  async createGuardedBashTool(cwd, settingsManager, runtimeRef) {
+    const sdk = await this.sdk();
+    const base = sdk.createBashToolDefinition(cwd, {
+      commandPrefix: settingsManager?.getShellCommandPrefix?.(),
+      shellPath: settingsManager?.getShellPath?.()
+    });
+    const execute = base.execute.bind(base);
+
+    return {
+      ...base,
+      description: `${base.description} YOLO Auto may ask for user approval before extremely dangerous commands unless AI Guardrails are in YOLO mode.`,
+      promptGuidelines: [
+        ...(Array.isArray(base.promptGuidelines) ? base.promptGuidelines : []),
+        'Extremely dangerous shell commands may require user approval from YOLO Auto before execution.'
+      ],
+      execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+        const command = String(params?.command || '').trim();
+        const active = runtimeRef?.current || this.active;
+        const approval = await this.ensureCommandApproved(active, command, 'AI bash tool');
+        if (!approval.approved) {
+          throw new Error(formatGuardrailBlockedMessage(command, approval.decision));
+        }
+        return execute(toolCallId, params, signal, onUpdate, ctx);
+      }
+    };
+  }
+
+  async buildCustomTools(cwd, settingsManager, runtimeRef) {
     const { Type } = await this.typebox();
     return [
+      await this.createGuardedBashTool(cwd, settingsManager, runtimeRef),
       {
         name: 'web_fetch',
         label: 'Web Fetch',
@@ -614,7 +746,7 @@ class PiSdkSessionManager {
   }
 
   handlePiEvent(event, active) {
-    if (!event || this.active !== active) return;
+    if (!event || !active || this.runtimes.get(active.id) !== active) return;
     const sessionId = active.id;
 
     if (event.type === 'agent_start') {
@@ -751,80 +883,136 @@ class PiSdkSessionManager {
     });
   }
 
-  async requireActive(id) {
-    await this.ensureSession(id);
-    if (!this.active) throw new Error('Session not found.');
-    if (id && !this.matchesActive(id)) throw new Error('Session not active.');
-    return this.active;
+  async requireActive(id, options = {}) {
+    const active = await this.ensureRuntime(id, { select: options.select !== false });
+    if (!active) throw new Error('Session not found.');
+    if (id && !this.matchesRuntime(active, id)) throw new Error('Session not active.');
+    return active;
+  }
+
+  setSelectedRuntime(runtime) {
+    if (!runtime) return;
+    this.active = runtime;
+  }
+
+  findRuntime(value) {
+    if (!value) return this.active || null;
+    const target = String(value);
+    if (this.runtimes.has(target)) return this.runtimes.get(target);
+    for (const runtime of this.runtimes.values()) {
+      if (this.matchesRuntime(runtime, target)) return runtime;
+    }
+    return null;
+  }
+
+  matchesRuntime(runtime, value) {
+    if (!runtime || !value) return false;
+    const target = String(value);
+    return target === runtime.id || target === runtime.sessionFile;
   }
 
   matchesActive(value) {
-    if (!this.active || !value) return false;
-    const target = String(value);
-    return target === this.active.id || target === this.active.sessionFile;
+    return this.matchesRuntime(this.active, value);
+  }
+
+  runtimeInfo(runtime) {
+    if (!runtime) return null;
+    const timestamp = new Date();
+    return {
+      id: runtime.id,
+      path: runtime.sessionFile,
+      cwd: runtime.cwd,
+      name: runtime.session.sessionName,
+      created: timestamp,
+      modified: timestamp,
+      messageCount: runtime.session.messages.length,
+      firstMessage: firstUserMessageTitle(runtime.session.messages),
+      allMessagesText: runtime.session.messages.map(messageText).join('\n')
+    };
   }
 
   activeInfo() {
-    if (!this.active) return null;
-    const timestamp = new Date();
+    return this.runtimeInfo(this.active);
+  }
+
+  runtimeSummary(runtime) {
+    if (!runtime) return null;
     return {
-      id: this.active.id,
-      path: this.active.sessionFile,
-      cwd: this.active.cwd,
-      name: this.active.session.sessionName,
-      created: timestamp,
-      modified: timestamp,
-      messageCount: this.active.session.messages.length,
-      firstMessage: firstUserMessageTitle(this.active.session.messages),
-      allMessagesText: this.active.session.messages.map(messageText).join('\n')
+      id: runtime.id,
+      title: runtime.session.sessionName || firstUserMessageTitle(runtime.session.messages) || 'New chat',
+      workspaceRoot: runtime.cwd,
+      thinkingLevel: fromPiThinkingLevel(runtime.session.thinkingLevel),
+      status: runtime.session.isStreaming || runtime.runInProgress ? 'running' : 'idle',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sessionFile: runtime.sessionFile,
+      busy: !!(runtime.session.isStreaming || runtime.runInProgress)
     };
   }
 
   activeSummary() {
-    if (!this.active) return null;
-    return {
-      id: this.active.id,
-      title: this.active.session.sessionName || firstUserMessageTitle(this.active.session.messages) || 'New chat',
-      workspaceRoot: this.active.cwd,
-      thinkingLevel: fromPiThinkingLevel(this.active.session.thinkingLevel),
-      status: this.active.session.isStreaming ? 'running' : 'idle',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      sessionFile: this.active.sessionFile,
-      busy: this.active.session.isStreaming
-    };
+    return this.runtimeSummary(this.active);
   }
 
   sessionInfoToSummary(info) {
-    const active = this.active && info.id === this.active.id;
+    const runtime = this.findRuntime(info.id);
     return {
       id: info.id,
-      title: info.name || info.firstMessage || 'New chat',
-      workspaceRoot: info.cwd || '',
-      thinkingLevel: active ? fromPiThinkingLevel(this.active.session.thinkingLevel) : fromPiThinkingLevel(this.getSettings()?.thinkingLevel),
-      status: active && this.active.session.isStreaming ? 'running' : 'idle',
+      title: runtime?.session?.sessionName || info.name || info.firstMessage || 'New chat',
+      workspaceRoot: runtime?.cwd || info.cwd || '',
+      thinkingLevel: runtime ? fromPiThinkingLevel(runtime.session.thinkingLevel) : fromPiThinkingLevel(this.getSettings()?.thinkingLevel),
+      status: runtime?.session?.isStreaming || runtime?.runInProgress ? 'running' : 'idle',
       createdAt: info.created instanceof Date ? info.created.toISOString() : new Date(info.created || Date.now()).toISOString(),
       updatedAt: info.modified instanceof Date ? info.modified.toISOString() : new Date(info.modified || Date.now()).toISOString(),
-      sessionFile: info.path,
-      busy: active ? this.active.session.isStreaming : false
+      sessionFile: runtime?.sessionFile || info.path,
+      busy: !!(runtime?.session?.isStreaming || runtime?.runInProgress)
     };
   }
 
-  getActiveRendererMessages() {
-    return (this.active?.session?.messages || []).map(toRendererMessage).filter(Boolean);
+  getRendererMessages(runtime = this.active) {
+    return (runtime?.session?.messages || []).map(toRendererMessage).filter(Boolean);
   }
 
-  queueSnapshot() {
-    const session = this.active?.session;
+  getActiveRendererMessages() {
+    return this.getRendererMessages(this.active);
+  }
+
+  queueSnapshot(runtime = this.active) {
+    const session = runtime?.session;
     return {
       steering: session ? [...session.getSteeringMessages()] : [],
       followUp: session ? [...session.getFollowUpMessages()] : []
     };
   }
 
+  getConcurrencyState() {
+    const maxConcurrency = normalizeMaxConcurrency(this.getSettings()?.maxConcurrency);
+    const runningSessions = [...this.runtimes.values()]
+      .filter((runtime) => runtime?.session?.isStreaming || runtime?.runInProgress)
+      .map((runtime) => this.runtimeSummary(runtime));
+    return {
+      maxConcurrency,
+      runningCount: runningSessions.length,
+      runningSessions,
+      canStart: runningSessions.length < maxConcurrency
+    };
+  }
+
+  canStartRun(sessionId) {
+    const runtime = this.findRuntime(sessionId);
+    if (runtime?.session?.isStreaming || runtime?.runInProgress) return true;
+    const concurrency = this.getConcurrencyState();
+    return concurrency.runningCount < concurrency.maxConcurrency;
+  }
+
+  hasBusySessions() {
+    return [...this.runtimes.values()].some((runtime) => runtime?.session?.isStreaming || runtime?.runInProgress);
+  }
+
   async getSessionInfo(idOrPath) {
     if (!idOrPath) return null;
-    if (this.active && this.matchesActive(idOrPath)) return this.activeInfo();
+    const runtime = this.findRuntime(idOrPath);
+    if (runtime) return this.runtimeInfo(runtime);
     const target = String(idOrPath);
     if (this.sessionIndex.has(target)) return this.sessionIndex.get(target);
     const sessions = await this.listSessions();
@@ -858,12 +1046,17 @@ class PiSdkSessionManager {
     return info ? { path: info.path, id: info.id } : null;
   }
 
+  disposeRuntime(runtimeOrId) {
+    const runtime = typeof runtimeOrId === 'string' ? this.findRuntime(runtimeOrId) : runtimeOrId;
+    if (!runtime) return;
+    try { runtime.unsubscribe?.(); } catch {}
+    try { runtime.session?.dispose?.(); } catch {}
+    this.runtimes.delete(runtime.id);
+    if (this.active === runtime) this.active = this.runtimes.values().next().value || null;
+  }
+
   disposeActive() {
-    if (!this.active) return;
-    try { this.active.unsubscribe?.(); } catch {}
-    try { this.active.session?.dispose?.(); } catch {}
-    this.closeBrowserTabs();
-    this.active = null;
+    this.disposeRuntime(this.active);
   }
 
   closeBrowserTabs() {
@@ -956,6 +1149,20 @@ function fromPiThinkingLevel(value) {
 function displayPiThinkingLevel(value) {
   const level = toPiThinkingLevel(value);
   return level === 'off' ? 'none' : level;
+}
+
+function formatGuardrailBlockedMessage(command, decision = {}) {
+  return [
+    'Command blocked by AI Guardrails.',
+    decision.reason ? `Reason: ${decision.reason}` : '',
+    '',
+    'Command:',
+    '```bash',
+    String(command || ''),
+    '```',
+    '',
+    'Disable protections in Settings → AI Guardrails → YOLO mode if you really want commands like this to run without approval.'
+  ].filter((line) => line !== '').join('\n');
 }
 
 function toRendererMessage(message) {
