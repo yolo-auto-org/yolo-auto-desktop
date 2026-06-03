@@ -1356,6 +1356,7 @@ async function browserOpen(manager, args, signal) {
 
   const existing = findBrowserTab(manager, args.label || args.targetId);
   if (existing && existing.label && existing.label === args.label) {
+    hardenBrowserToolWindow(existing.window, manager?.log || (() => {}));
     await existing.window.loadURL(parsed.toString());
     assertNotCancelled(signal);
     return { ok: true, tool: 'browser', action: 'open', tab: browserTabInfo(existing), reused: true };
@@ -1364,8 +1365,9 @@ async function browserOpen(manager, args, signal) {
   const { BrowserWindow } = require('electron');
   if (!BrowserWindow) throw new Error('Electron BrowserWindow is not available.');
 
+  const tabId = `t${manager.browserNextTabId++}`;
   const tab = {
-    id: `t${manager.browserNextTabId++}`,
+    id: tabId,
     label: sanitizeBrowserLabel(args.label),
     window: new BrowserWindow({
       width: 1280,
@@ -1374,11 +1376,13 @@ async function browserOpen(manager, args, signal) {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: true
+        sandbox: true,
+        partition: `yolo-auto-browser-${tabId}`
       }
     })
   };
 
+  hardenBrowserToolWindow(tab.window, manager?.log || (() => {}));
   tab.window.on('closed', () => manager.browserTabs.delete(tab.id));
   manager.browserTabs.set(tab.id, tab);
 
@@ -1418,6 +1422,18 @@ async function browserFill(tab, args, signal) {
   if (!result?.filled) throw new Error(result?.error || 'No matching fillable field found.');
   await delay(200, signal);
   return result;
+}
+
+function hardenBrowserToolWindow(browserWindow, log = () => {}) {
+  const webContents = browserWindow?.webContents;
+  if (!webContents) return;
+
+  try {
+    const { installElectronSessionWebGuard } = require('./web-safety');
+    installElectronSessionWebGuard(webContents.session, log);
+  } catch (error) {
+    log('warn', 'browser-tool-guard:install-failed', { error: error?.message || String(error) });
+  }
 }
 
 function listBrowserTabs(manager) {
@@ -2171,6 +2187,7 @@ module.exports = {
     sanitizeWebResearchText,
     stripHtml,
     isUsableSearchResult,
-    fetchUrl
+    fetchUrl,
+    hardenBrowserToolWindow
   }
 };

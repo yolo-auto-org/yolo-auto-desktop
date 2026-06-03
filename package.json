@@ -7,9 +7,10 @@
   "scripts": {
     "start": "node scripts/ensure-electron.js && electron .",
     "ensure-electron": "node scripts/ensure-electron.js",
-    "test": "npm run test:tool-calls && npm run test:web-safety",
+    "test": "npm run test:tool-calls && npm run test:web-safety && npm run test:electron-browser",
     "test:tool-calls": "node scripts/tool-call-regression.js",
-    "test:web-safety": "node scripts/web-research-sanitizer-regression.js"
+    "test:web-safety": "node scripts/web-research-sanitizer-regression.js",
+    "test:electron-browser": "node scripts/electron-browser-guard-regression.js"
   },
   "devDependencies": {
     "electron": "^42.3.0"
