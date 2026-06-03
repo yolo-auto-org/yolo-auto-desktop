@@ -1,11 +1,38 @@
 {
   "finalContent": {
     "read": "Fixture final answer.",
-    "unsafeWebFetch": "Unsafe web fetch was blocked."
+    "unsafeWebFetch": "Unsafe web fetch was blocked.",
+    "unsafeBrowserOpen": "Unsafe browser open was blocked."
   },
   "privateFetchHits": 0,
-  "requestCount": 4,
+  "requestCount": 6,
   "requestToolNames": [
+    [
+      "bash",
+      "browser",
+      "edit",
+      "find",
+      "get_web",
+      "grep",
+      "ls",
+      "read",
+      "web_fetch",
+      "web_search",
+      "write"
+    ],
+    [
+      "bash",
+      "browser",
+      "edit",
+      "find",
+      "get_web",
+      "grep",
+      "ls",
+      "read",
+      "web_fetch",
+      "web_search",
+      "write"
+    ],
     [
       "bash",
       "browser",
@@ -72,6 +99,14 @@
         "url": "http://127.0.0.1:[PORT]/private",
         "maxChars": 500
       }
+    },
+    {
+      "name": "browser",
+      "args": {
+        "action": "open",
+        "url": "http://127.0.0.1:[PORT]/private",
+        "label": "unsafe-fixture"
+      }
     }
   ],
   "toolResults": [
@@ -84,13 +119,20 @@
       "name": "web_fetch",
       "ok": false,
       "summary": "Fetched"
+    },
+    {
+      "name": "browser",
+      "ok": false,
+      "summary": "Browser action"
     }
   ],
   "assistantContents": [
     "Fixture final answer.",
     "Fixture final answer.",
     "Unsafe web fetch was blocked.",
-    "Unsafe web fetch was blocked."
+    "Unsafe web fetch was blocked.",
+    "Unsafe browser open was blocked.",
+    "Unsafe browser open was blocked."
   ],
   "leakedAssistantMarkup": []
 }

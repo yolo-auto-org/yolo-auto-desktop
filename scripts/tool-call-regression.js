@@ -65,8 +65,11 @@ async function main() {
     const unsafeWebSession = await manager.createSession({ workspaceRoot, thinkingLevel: 'none' });
     const unsafeWebResult = await manager.run(unsafeWebSession.id, 'Try the unsafe web fixture URL, then report the result.');
 
+    const unsafeBrowserSession = await manager.createSession({ workspaceRoot, thinkingLevel: 'none' });
+    const unsafeBrowserResult = await manager.run(unsafeBrowserSession.id, 'Try the unsafe browser fixture URL, then report the result.');
+
     const actual = normalizeRun({
-      results: { read: readResult, unsafeWebFetch: unsafeWebResult },
+      results: { read: readResult, unsafeWebFetch: unsafeWebResult, unsafeBrowserOpen: unsafeBrowserResult },
       events,
       requests: server.requests,
       privateFetchHits: server.privateFetchHits
@@ -181,8 +184,41 @@ function createFixtureServer() {
           model: MODEL,
           choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }]
         });
-      } else {
+      } else if (callNumber === 4) {
         writeTextAnswer(res, 'chatcmpl-fixture-4', 'Unsafe web fetch was blocked.');
+      } else if (callNumber === 5) {
+        const port = server.address().port;
+        writeSse(res, {
+          id: 'chatcmpl-fixture-5',
+          object: 'chat.completion.chunk',
+          created: 0,
+          model: MODEL,
+          choices: [{
+            index: 0,
+            delta: {
+              role: 'assistant',
+              tool_calls: [{
+                index: 0,
+                id: 'call_fixture_unsafe_browser_open',
+                type: 'function',
+                function: {
+                  name: 'browser',
+                  arguments: JSON.stringify({ action: 'open', url: `http://127.0.0.1:${port}/private`, label: 'unsafe-fixture' })
+                }
+              }]
+            },
+            finish_reason: null
+          }]
+        });
+        writeSse(res, {
+          id: 'chatcmpl-fixture-5',
+          object: 'chat.completion.chunk',
+          created: 0,
+          model: MODEL,
+          choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }]
+        });
+      } else {
+        writeTextAnswer(res, 'chatcmpl-fixture-6', 'Unsafe browser open was blocked.');
       }
 
       res.end('data: [DONE]\n\n');
@@ -249,7 +285,8 @@ function normalizeRun({ results, events, requests, privateFetchHits }) {
   return {
     finalContent: {
       read: results?.read?.content || '',
-      unsafeWebFetch: results?.unsafeWebFetch?.content || ''
+      unsafeWebFetch: results?.unsafeWebFetch?.content || '',
+      unsafeBrowserOpen: results?.unsafeBrowserOpen?.content || ''
     },
     privateFetchHits,
     requestCount: requests.length,

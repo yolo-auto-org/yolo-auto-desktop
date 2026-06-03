@@ -1352,6 +1352,7 @@ async function browserOpen(manager, args, signal) {
   if (typeof args.url !== 'string' || !args.url.trim()) throw new Error('url is required for browser open.');
   const parsed = new URL(args.url.trim());
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('browser only supports HTTP(S) URLs.');
+  await assertSafeWebFetchTarget(parsed.toString());
 
   const existing = findBrowserTab(manager, args.label || args.targetId);
   if (existing && existing.label && existing.label === args.label) {
