@@ -317,6 +317,7 @@ button {
   display: flex;
   align-items: center;
   gap: 5px;
+  width: 100%;
   min-width: 0;
   color: var(--muted-2);
   font-size: 11px;
@@ -324,6 +325,10 @@ button {
 
 .session-item-meta.running {
   color: var(--yellow);
+}
+
+.session-item-meta.cancelled {
+  color: var(--muted-2);
 }
 
 .session-item-time,
@@ -351,7 +356,13 @@ button {
   width: 8px;
   height: 8px;
   flex: 0 0 auto;
+  margin-left: auto;
   border-radius: 999px;
+  background: var(--muted-2);
+  box-shadow: 0 0 0 3px rgba(133, 133, 133, 0.14);
+}
+
+.session-status-dot.ready {
   background: var(--green);
   box-shadow: 0 0 0 3px rgba(var(--green-rgb), 0.14), 0 0 8px rgba(var(--green-rgb), 0.45);
 }
@@ -360,6 +371,11 @@ button {
   background: var(--yellow);
   box-shadow: 0 0 0 3px rgba(var(--yellow-rgb), 0.14), 0 0 8px rgba(var(--yellow-rgb), 0.45);
   animation: status-pulse 0.9s ease-in-out infinite;
+}
+
+.session-status-dot.cancelled {
+  background: var(--muted-2);
+  box-shadow: 0 0 0 3px rgba(133, 133, 133, 0.14);
 }
 
 .sessions-empty {
@@ -922,6 +938,16 @@ button {
 .tool-item.error .tool-pill {
   background: var(--red);
   box-shadow: 0 0 0 4px rgba(var(--red-rgb), 0.14);
+}
+
+.tool-item.cancelled .tool-pill {
+  background: var(--muted-2);
+  box-shadow: 0 0 0 4px rgba(133, 133, 133, 0.14);
+}
+
+.tool-item.cancelled .tool-name,
+.tool-item.cancelled .tool-summary {
+  color: var(--muted-2);
 }
 
 .tool-item.skill {

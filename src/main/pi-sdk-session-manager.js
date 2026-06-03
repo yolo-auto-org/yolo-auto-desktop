@@ -243,6 +243,8 @@ class PiSdkSessionManager {
       active.suppressedUserTexts = new Set();
       active.cancelRequested = false;
       active.emptyResponseRetried = false;
+      active.toolCalls.clear();
+      active.cancelledToolCallIds.clear();
 
       this.emit({ type: 'status', message: `Thinking (${displayPiThinkingLevel(active.session.thinkingLevel)})…`, sessionId: active.id });
 
@@ -405,10 +407,31 @@ class PiSdkSessionManager {
     const active = await this.requireActive(id, { select: false });
     active.cancelRequested = true;
     const queued = active.session.clearQueue();
+    this.emitPendingToolCancellations(active);
+    this.emit({ type: 'status', message: 'Cancelled', sessionId: active.id });
     await active.session.abort();
+    this.emitPendingToolCancellations(active);
     active.runInProgress = false;
     this.emitSessionsChanged();
-    return { ok: true, busy: !!(active.session.isStreaming || active.runInProgress), queued };
+    return { ok: true, status: 'cancelled', busy: !!(active.session.isStreaming || active.runInProgress), queued };
+  }
+
+  emitPendingToolCancellations(active) {
+    if (!active?.toolCalls?.size) return;
+    if (!active.cancelledToolCallIds) active.cancelledToolCallIds = new Set();
+
+    for (const [toolCallId, toolCall] of active.toolCalls.entries()) {
+      active.cancelledToolCallIds.add(toolCallId);
+      active.toolCalls.delete(toolCallId);
+      this.emit({
+        type: 'tool:cancelled',
+        id: toolCallId,
+        name: toolCall.name,
+        args: toolCall.args || {},
+        result: { ok: false, status: 'cancelled', summary: 'Cancelled' },
+        sessionId: active.id
+      });
+    }
   }
 
   async reset(id) {
@@ -486,7 +509,8 @@ class PiSdkSessionManager {
       lastAssistantText: session.getLastAssistantText?.() || '',
       initialPromptText: '',
       initialUserSeen: false,
-      toolArgs: new Map(),
+      toolCalls: new Map(),
+      cancelledToolCallIds: new Set(),
       seenSkillKeys: new Set(),
       suppressedUserTexts: new Set(),
       cancelRequested: false,
@@ -817,7 +841,7 @@ class PiSdkSessionManager {
     }
 
     if (event.type === 'tool_execution_start') {
-      active.toolArgs.set(event.toolCallId, event.args || {});
+      active.toolCalls.set(event.toolCallId, { name: event.toolName, args: event.args || {} });
       const readSkill = event.toolName === 'read' ? skillFromReadArgs(event.args || {}) : null;
       if (readSkill) this.emitSkillUsed(active, { ...readSkill, source: 'read' });
       this.emit({ type: 'tool:start', id: event.toolCallId, name: event.toolName, args: event.args || {}, sessionId });
@@ -829,8 +853,27 @@ class PiSdkSessionManager {
     }
 
     if (event.type === 'tool_execution_end') {
-      const args = active.toolArgs.get(event.toolCallId) || {};
-      active.toolArgs.delete(event.toolCallId);
+      if (active.cancelledToolCallIds?.has(event.toolCallId)) {
+        active.cancelledToolCallIds.delete(event.toolCallId);
+        return;
+      }
+
+      const toolCall = active.toolCalls.get(event.toolCallId);
+      const args = toolCall?.args || {};
+      active.toolCalls.delete(event.toolCallId);
+
+      if (active.cancelRequested && event.isError) {
+        this.emit({
+          type: 'tool:cancelled',
+          id: event.toolCallId,
+          name: event.toolName || toolCall?.name,
+          args,
+          result: { ok: false, status: 'cancelled', summary: 'Cancelled' },
+          sessionId
+        });
+        return;
+      }
+
       this.emit({
         type: 'tool:result',
         id: event.toolCallId,
@@ -858,7 +901,8 @@ class PiSdkSessionManager {
     }
 
     if (event.type === 'agent_end') {
-      this.emit({ type: 'status', message: event.willRetry ? 'Retrying…' : 'Done', sessionId });
+      const message = active.cancelRequested ? 'Cancelled' : (event.willRetry ? 'Retrying…' : 'Done');
+      this.emit({ type: 'status', message, sessionId });
       this.emitSessionsChanged();
       return;
     }
@@ -942,10 +986,11 @@ class PiSdkSessionManager {
       title: runtime.session.sessionName || firstUserMessageTitle(runtime.session.messages) || 'New chat',
       workspaceRoot: runtime.cwd,
       thinkingLevel: fromPiThinkingLevel(runtime.session.thinkingLevel),
-      status: runtime.session.isStreaming || runtime.runInProgress ? 'running' : 'idle',
+      status: runtimeStatus(runtime),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       sessionFile: runtime.sessionFile,
+      messageCount: runtime.session.messages.length,
       busy: !!(runtime.session.isStreaming || runtime.runInProgress)
     };
   }
@@ -961,10 +1006,11 @@ class PiSdkSessionManager {
       title: runtime?.session?.sessionName || info.name || info.firstMessage || 'New chat',
       workspaceRoot: runtime?.cwd || info.cwd || '',
       thinkingLevel: runtime ? fromPiThinkingLevel(runtime.session.thinkingLevel) : fromPiThinkingLevel(this.getSettings()?.thinkingLevel),
-      status: runtime?.session?.isStreaming || runtime?.runInProgress ? 'running' : 'idle',
+      status: runtime ? runtimeStatus(runtime) : 'idle',
       createdAt: info.created instanceof Date ? info.created.toISOString() : new Date(info.created || Date.now()).toISOString(),
       updatedAt: info.modified instanceof Date ? info.modified.toISOString() : new Date(info.modified || Date.now()).toISOString(),
       sessionFile: runtime?.sessionFile || info.path,
+      messageCount: runtime?.session?.messages?.length ?? info.messageCount ?? 0,
       busy: !!(runtime?.session?.isStreaming || runtime?.runInProgress)
     };
   }
@@ -1073,6 +1119,13 @@ class PiSdkSessionManager {
       .then((sessions) => this.emit({ type: 'sessions:update', sessions }))
       .catch((error) => this.log('warn', 'pi:sessions:update-failed', { error: error?.message || String(error) }));
   }
+}
+
+function runtimeStatus(runtime) {
+  if (!runtime) return 'idle';
+  if (runtime.session?.isStreaming || runtime.runInProgress) return 'running';
+  if (runtime.cancelRequested) return 'cancelled';
+  return 'idle';
 }
 
 function makeProviderModel(modelId, compatibilityPreset = 'openai') {

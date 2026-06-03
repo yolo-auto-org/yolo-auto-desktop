@@ -1,12 +1,16 @@
 const THINKING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'];
 const RECENT_SESSION_LIMIT = 5;
 const BOTTOM_SCROLL_THRESHOLD = 32;
+const SESSION_REVIEW_STORAGE_KEY = 'yolo-session-reviews';
+const SESSION_REVIEW_LIMIT = 500;
 
 const state = {
   settings: {},
   homeBaseRoot: '',
   workspaceRoot: '',
   sessions: [],
+  sessionReviews: loadSessionReviews(),
+  reviewBaselineReady: false,
   activeSessionId: '',
   activeSession: null,
   busy: false,
@@ -600,6 +604,7 @@ function applySessionPayload(payload = {}) {
   state.queues = payload.active?.queues || { steering: [], followUp: [] };
   state.concurrency.runningSessions = state.sessions.filter((session) => session.busy);
   state.concurrency.runningCount = state.concurrency.runningSessions.length;
+  ensureSessionReviewBaseline();
 }
 
 async function createNewSession() {
@@ -617,11 +622,16 @@ async function createNewSession() {
 
 async function selectSession(sessionId) {
   if (!sessionId) return false;
-  if (sessionId === state.activeSessionId) return true;
+  if (sessionId === state.activeSessionId) {
+    markSessionReviewed(sessionId);
+    renderSessions();
+    return true;
+  }
 
   try {
     const payload = await window.yolo.selectSession(sessionId);
     applySessionPayload(payload);
+    if (payload.active?.session) markSessionReviewed(payload.active.session);
     state.currentAssistant = null;
     renderMessagesFromHistory(payload.active?.messages || [], { partialAssistantText: payload.active?.partialAssistantText || '' });
     renderChrome();
@@ -1062,6 +1072,88 @@ function samePath(a, b) {
   return normalize(a) === normalize(b);
 }
 
+function loadSessionReviews() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SESSION_REVIEW_STORAGE_KEY) || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).map(([id, token]) => [id, Number(token) || 0]));
+  } catch {
+    return {};
+  }
+}
+
+function saveSessionReviews() {
+  try {
+    const entries = Object.entries(state.sessionReviews || {})
+      .filter(([id, token]) => id && Number.isFinite(Number(token)))
+      .sort((a, b) => Number(b[1]) - Number(a[1]))
+      .slice(0, SESSION_REVIEW_LIMIT);
+    state.sessionReviews = Object.fromEntries(entries.map(([id, token]) => [id, Number(token) || 0]));
+    localStorage.setItem(SESSION_REVIEW_STORAGE_KEY, JSON.stringify(state.sessionReviews));
+  } catch {
+    // Ignore storage failures; review dots will still work for this render pass.
+  }
+}
+
+function ensureSessionReviewBaseline() {
+  if (state.reviewBaselineReady || !state.sessions.length) return;
+  state.reviewBaselineReady = true;
+  markSessionsReviewed(state.sessions, { onlyMissing: true });
+}
+
+function markSessionsReviewed(sessions = [], options = {}) {
+  let changed = false;
+  for (const session of sessions || []) {
+    if (!session?.id || session.busy || getSessionStatus(session) === 'running') continue;
+    const token = getSessionReviewToken(session);
+    if (token <= 0) continue;
+    if (options.onlyMissing && Number(state.sessionReviews[session.id] || 0) > 0) continue;
+    if (Number(state.sessionReviews[session.id] || 0) >= token) continue;
+    state.sessionReviews[session.id] = token;
+    changed = true;
+  }
+  if (changed) saveSessionReviews();
+}
+
+function markSessionReviewed(sessionOrId) {
+  const session = typeof sessionOrId === 'string'
+    ? state.sessions.find((candidate) => candidate.id === sessionOrId) || { id: sessionOrId }
+    : sessionOrId;
+  if (!session?.id) return;
+  const token = getSessionReviewToken(session);
+  if (token <= 0 || Number(state.sessionReviews[session.id] || 0) >= token) return;
+  state.sessionReviews[session.id] = token;
+  saveSessionReviews();
+}
+
+function getSessionReviewToken(session) {
+  const count = Number(session?.messageCount);
+  if (Number.isFinite(count)) return Math.max(0, count);
+  return getSessionTimestamp(session);
+}
+
+function isSessionUnreviewed(session) {
+  if (!session?.id || session.busy || getSessionStatus(session) !== 'idle') return false;
+  const token = getSessionReviewToken(session);
+  if (token <= 0) return false;
+  return token > Number(state.sessionReviews[session.id] || 0);
+}
+
+function getSessionStatus(session) {
+  if (session?.busy) return 'running';
+  const raw = String(session?.status || '').trim().toLowerCase();
+  if (raw === 'running') return 'running';
+  if (raw === 'cancelled' || raw === 'canceled') return 'cancelled';
+  return 'idle';
+}
+
+function getSessionIndicatorState(session) {
+  const status = getSessionStatus(session);
+  if (status === 'running') return 'running';
+  if (status === 'cancelled') return 'cancelled';
+  return isSessionUnreviewed(session) ? 'ready' : 'reviewed';
+}
+
 function getSessionsNewestFirst() {
   return [...state.sessions].sort((a, b) => {
     const bTime = new Date(b?.updatedAt || b?.createdAt || 0).getTime() || 0;
@@ -1250,7 +1342,7 @@ async function terminateSession(sessionId, pendingText = '') {
   try {
     setStatus('Terminating session…');
     const result = await window.yolo.cancelRun(sessionId);
-    state.sessions = state.sessions.map((session) => session.id === sessionId ? { ...session, busy: false, status: 'idle' } : session);
+    state.sessions = state.sessions.map((session) => session.id === sessionId ? { ...session, busy: false, status: 'cancelled' } : session);
     if (state.activeSessionId === sessionId) {
       state.busy = false;
       restoreQueuedToEditor(result?.queued);
@@ -1313,7 +1405,7 @@ function createSessionSortHeader(label, key) {
 
 function createSessionTableRow(session) {
   const row = document.createElement('tr');
-  row.className = `session-table-row${session.id === state.activeSessionId ? ' active' : ''}${session.busy ? ' running' : ''}`;
+  row.className = `session-table-row${session.id === state.activeSessionId ? ' active' : ''}${getSessionStatus(session) === 'running' ? ' running' : ''}`;
   row.tabIndex = 0;
   row.setAttribute('role', 'button');
   row.dataset.sessionId = session.id;
@@ -1324,7 +1416,11 @@ function createSessionTableRow(session) {
 
   const time = document.createElement('td');
   time.className = 'sessions-time-cell';
-  time.textContent = session.busy ? 'running' : formatSessionClock(session.updatedAt || session.createdAt);
+  time.textContent = getSessionStatus(session) === 'running'
+    ? 'running'
+    : getSessionStatus(session) === 'cancelled'
+      ? 'cancelled'
+      : formatSessionClock(session.updatedAt || session.createdAt);
 
   const preview = document.createElement('td');
   preview.className = 'sessions-preview-cell';
@@ -1343,6 +1439,8 @@ function createSessionTableRow(session) {
   row.appendChild(preview);
 
   const select = async () => {
+    markSessionReviewed(session);
+    renderSessions();
     const selected = await selectSession(session.id);
     if (selected) closeSessionsPane();
   };
@@ -1403,6 +1501,27 @@ function getSessionTimeOfDay(session) {
   return date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
 }
 
+function formatSessionListStatus(session) {
+  const status = getSessionStatus(session);
+  if (status === 'running') return 'running';
+  if (status === 'cancelled') return 'cancelled';
+  return formatSessionTime(session.updatedAt);
+}
+
+function getSessionIndicatorTitle(indicatorState) {
+  if (indicatorState === 'running') return 'Running';
+  if (indicatorState === 'ready') return 'New result ready';
+  if (indicatorState === 'cancelled') return 'Cancelled';
+  return 'Reviewed';
+}
+
+function getSessionIndicatorLabel(indicatorState) {
+  if (indicatorState === 'running') return 'Session running';
+  if (indicatorState === 'ready') return 'Session has a new result';
+  if (indicatorState === 'cancelled') return 'Session cancelled';
+  return 'Session reviewed';
+}
+
 function createSessionItem(session, { showWorkspace = false, closeOnSelect = false } = {}) {
   const button = document.createElement('button');
   button.type = 'button';
@@ -1413,18 +1532,19 @@ function createSessionItem(session, { showWorkspace = false, closeOnSelect = fal
   title.className = 'session-item-title';
   title.textContent = session.title || 'New chat';
 
+  const indicatorState = getSessionIndicatorState(session);
   const meta = document.createElement('div');
-  meta.className = `session-item-meta${session.busy ? ' running' : ''}`;
+  meta.className = `session-item-meta${indicatorState === 'running' ? ' running' : ''}${indicatorState === 'cancelled' ? ' cancelled' : ''}`;
 
   const time = document.createElement('span');
   time.className = 'session-item-time';
-  time.textContent = session.busy ? 'running' : formatSessionTime(session.updatedAt);
+  time.textContent = formatSessionListStatus(session);
   meta.appendChild(time);
 
   const status = document.createElement('span');
-  status.className = `session-status-dot${session.busy ? ' running' : ''}`;
-  status.title = session.busy ? 'Running' : 'Ready';
-  status.setAttribute('aria-label', session.busy ? 'Session running' : 'Session ready');
+  status.className = `session-status-dot ${indicatorState}`;
+  status.title = getSessionIndicatorTitle(indicatorState);
+  status.setAttribute('aria-label', getSessionIndicatorLabel(indicatorState));
   meta.appendChild(status);
 
   if (showWorkspace && session.workspaceRoot) {
@@ -1443,6 +1563,8 @@ function createSessionItem(session, { showWorkspace = false, closeOnSelect = fal
   button.appendChild(title);
   button.appendChild(meta);
   button.addEventListener('click', async () => {
+    markSessionReviewed(session);
+    renderSessions();
     const selected = await selectSession(session.id);
     if (selected && closeOnSelect) closeSessionsPane();
   });
@@ -1565,6 +1687,7 @@ async function sendPrompt(providedText) {
   removeWelcome();
   const optimisticUser = addMessage('user', text);
   state.currentAssistant = addAssistantShell();
+  let runCancelled = false;
 
   try {
     updateLocalSessionAfterSend(text, runSessionId);
@@ -1584,12 +1707,20 @@ async function sendPrompt(providedText) {
         await refreshConcurrencyState();
         openConcurrencyModal(text);
       }
+    } else if (isCancellationMessage(errorText) && state.activeSessionId === runSessionId) {
+      runCancelled = true;
+      markPendingToolsCancelled(state.currentAssistant);
+      setStatus('Cancelled');
     } else if (state.activeSessionId === runSessionId) {
       ensureAssistantShell().content.innerHTML = `<span class="error-text">${escapeHtml(errorText)}</span>`;
       setStatus('Error');
     }
   } finally {
-    state.sessions = state.sessions.map((session) => session.id === runSessionId ? { ...session, busy: false } : session);
+    state.sessions = state.sessions.map((session) => {
+      if (session.id !== runSessionId) return session;
+      const cancelled = runCancelled || getSessionStatus(session) === 'cancelled';
+      return { ...session, busy: false, status: cancelled ? 'cancelled' : 'idle' };
+    });
     if (state.activeSessionId === runSessionId) {
       state.busy = false;
       state.currentAssistant = null;
@@ -1607,7 +1738,7 @@ function updateLocalSessionAfterSend(text, sessionId = state.activeSessionId) {
   state.sessions = state.sessions.map((session) => {
     if (session.id !== sessionId) return session;
     const nextTitle = session.title === 'New chat' ? title : session.title;
-    const next = { ...session, title: nextTitle, busy: true, updatedAt: new Date().toISOString() };
+    const next = { ...session, title: nextTitle, busy: true, status: 'running', updatedAt: new Date().toISOString() };
     if (sessionId === state.activeSessionId) state.activeSession = next;
     return next;
   });
@@ -1671,12 +1802,21 @@ async function updateSessionThinkingLevel() {
 
 async function cancelRun() {
   if (!state.busy) return;
+  const cancelSessionId = state.activeSessionId;
   els.cancelBtn.disabled = true;
   setStatus('Cancelling…');
+  markPendingToolsCancelled(state.currentAssistant);
 
   try {
-    const result = await window.yolo.cancelRun(state.activeSessionId);
+    const result = await window.yolo.cancelRun(cancelSessionId);
     restoreQueuedToEditor(result?.queued);
+    state.sessions = state.sessions.map((session) => session.id === cancelSessionId ? { ...session, busy: false, status: 'cancelled' } : session);
+    if (state.activeSessionId === cancelSessionId) {
+      state.busy = false;
+      updateBusyUi();
+      setStatus('Cancelled');
+    }
+    renderSessions();
   } catch (error) {
     els.cancelBtn.disabled = false;
     addAssistantError(error);
@@ -1802,11 +1942,16 @@ function displayError(error) {
     .replace(/^Error:\s*/, '');
 }
 
+function isCancellationMessage(message) {
+  return /\b(abort(?:ed)?|cancelled|canceled)\b/i.test(String(message || ''));
+}
+
 function handleAgentEvent(event) {
   if (!event) return;
 
   if (event.type === 'sessions:update') {
     state.sessions = event.sessions || [];
+    ensureSessionReviewBaseline();
     state.concurrency.runningSessions = state.sessions.filter((session) => session.busy);
     state.concurrency.runningCount = state.concurrency.runningSessions.length;
     const active = state.sessions.find((session) => session.id === state.activeSessionId);
@@ -1878,15 +2023,30 @@ function handleAgentEvent(event) {
       shell.activity.appendChild(item.root);
     }
     const ok = event.result?.ok !== false;
-    item.root.classList.remove('pending');
+    item.name = event.name || item.name;
+    item.args = event.args || item.args || {};
+    item.root.classList.remove('pending', 'cancelled');
     item.root.classList.add(ok ? 'ok' : 'error');
-    item.summary.textContent = compactToolLabel(event.name, event.args, event.result?.summary || (ok ? 'Completed' : 'Failed'));
+    item.summary.textContent = compactToolLabel(item.name, item.args, event.result?.summary || (ok ? 'Completed' : 'Failed'));
     if (event.result?.preview) {
       item.root.classList.add('has-preview');
       item.root.title = 'Click to show or hide tool output';
       item.preview.textContent = event.result.preview;
     }
     scrollToBottom();
+    return;
+  }
+
+  if (event.type === 'tool:cancelled') {
+    const shell = ensureAssistantShell();
+    const item = shell.tools.get(event.id) || createToolItem(event);
+    if (!shell.tools.has(event.id)) {
+      shell.tools.set(event.id, item);
+      shell.activity.appendChild(item.root);
+    }
+    markToolCancelled(item, event);
+    scrollToBottom();
+    return;
   }
 }
 
@@ -1906,6 +2066,22 @@ function renderQueue() {
   els.queuePanel.innerHTML = items.map((item) => `
     <div class="queue-chip"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.text)}</span></div>
   `).join('');
+}
+
+function markPendingToolsCancelled(shell = state.currentAssistant) {
+  if (!shell?.tools) return;
+  for (const item of shell.tools.values()) {
+    if (item?.root?.classList.contains('pending')) markToolCancelled(item);
+  }
+}
+
+function markToolCancelled(item, event = {}) {
+  if (!item?.root) return;
+  item.name = event.name || item.name;
+  item.args = event.args || item.args || {};
+  item.root.classList.remove('pending', 'ok', 'error');
+  item.root.classList.add('cancelled');
+  item.summary.textContent = compactToolLabel(item.name, item.args, event.result?.summary || 'Cancelled');
 }
 
 function createToolItem(event) {
@@ -1941,7 +2117,7 @@ function createToolItem(event) {
     if (root.classList.contains('has-preview')) root.classList.toggle('expanded');
   });
 
-  return { root, summary, preview };
+  return { root, summary, preview, name: event.name, args: event.args || {} };
 }
 
 function createSkillActivityItem(event) {
@@ -2175,7 +2351,8 @@ function updateStatusIndicator(message) {
 
 function getStatusLevel(message) {
   const text = String(message || '').toLowerCase();
-  if (/error|failed|failure|blocked|denied|cancelled|canceled|not found/.test(text)) return 'error';
+  if (/cancelled|canceled/.test(text)) return 'warn';
+  if (/error|failed|failure|blocked|denied|not found/.test(text)) return 'error';
   if (/thinking|working|running|queue|cancell?ing|compact|retrying|waiting|preparing|loading|saving|refreshing|approv/.test(text)) return 'warn';
   return 'ok';
 }
