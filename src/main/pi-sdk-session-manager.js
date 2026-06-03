@@ -1585,7 +1585,8 @@ async function toolWebFetch(args, signal) {
   const maxChars = clampInt(args.maxChars, 100, 500_000, TOOL_TEXT_LIMIT);
   const startedAt = Date.now();
   const response = await fetchUrl(url.toString(), args.timeoutSeconds, signal, {
-    accept: 'text/markdown,text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8'
+    accept: 'text/markdown,text/html,application/xhtml+xml,application/json,text/plain;q=0.9,*/*;q=0.8',
+    safeRedirects: true
   });
   const contentType = response.headers.get('content-type') || '';
   const raw = await readResponseTextLimited(response, WEB_MAX_RESPONSE_BYTES, signal);
@@ -1633,7 +1634,8 @@ async function toolWebSearch(args, signal) {
     assertNotCancelled(signal);
     try {
       const response = await fetchUrl(provider.url, args.timeoutSeconds, signal, {
-        accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8'
+        accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
+        safeRedirects: true
       });
       const raw = await readResponseTextLimited(response, WEB_MAX_RESPONSE_BYTES, signal);
       const results = provider.parse(raw.text).slice(0, count);
@@ -1687,21 +1689,36 @@ async function fetchUrl(url, timeoutSecondsValue, signal, headers = {}) {
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
+  const enforceSafeRedirects = headers.safeRedirects === true;
   signal?.addEventListener?.('abort', onAbort, { once: true });
 
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        accept: headers.accept || '*/*',
-        'accept-language': 'en-US,en;q=0.9',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36'
-      }
-    });
-    assertNotCancelled(signal);
-    return response;
+    let currentUrl = String(url || '');
+    const visited = new Set();
+    for (let redirects = 0; redirects <= 20; redirects += 1) {
+      if (enforceSafeRedirects) await assertSafeWebFetchTarget(currentUrl);
+      if (visited.has(currentUrl)) throw new Error('Redirect loop detected');
+      visited.add(currentUrl);
+
+      const response = await fetch(currentUrl, {
+        method: 'GET',
+        redirect: enforceSafeRedirects ? 'manual' : 'follow',
+        signal: controller.signal,
+        headers: {
+          accept: headers.accept || '*/*',
+          'accept-language': 'en-US,en;q=0.9',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36'
+        }
+      });
+      assertNotCancelled(signal);
+
+      if (!enforceSafeRedirects || !isFetchRedirectStatus(response.status)) return response;
+
+      const location = response.headers.get('location');
+      if (!location) return response;
+      currentUrl = new URL(location, currentUrl).toString();
+    }
+    throw new Error('Too many redirects');
   } catch (error) {
     if (signal?.aborted) throw new Error('Cancelled');
     if (error?.name === 'AbortError') throw new Error(`web request timed out after ${timeoutSeconds}s.`);
@@ -1710,6 +1727,10 @@ async function fetchUrl(url, timeoutSecondsValue, signal, headers = {}) {
     clearTimeout(timer);
     signal?.removeEventListener?.('abort', onAbort);
   }
+}
+
+function isFetchRedirectStatus(status) {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
 async function readResponseTextLimited(response, maxBytes, signal) {
@@ -1761,21 +1782,51 @@ function extractWebContent(raw, contentType, extractMode, finalUrl) {
   const lowerType = String(contentType || '').toLowerCase();
   if (lowerType.includes('application/json')) {
     const text = prettyJson(raw);
-    return { title: undefined, extractor: 'json', text: extractMode === 'text' ? text : `\`\`\`json\n${text}\n\`\`\`` };
+    const output = extractMode === 'text' ? text : `\`\`\`json\n${text}\n\`\`\``;
+    return { title: undefined, extractor: 'json', text: sanitizeWebResearchText(output) };
   }
   if (lowerType.includes('html') || looksLikeHtml(raw)) {
     const title = extractHtmlTitle(raw);
     const markdown = htmlToMarkdown(raw, finalUrl);
-    return { title, extractor: 'basic-html', text: extractMode === 'text' ? markdownToText(markdown) : markdown };
+    const output = extractMode === 'text' ? markdownToText(markdown) : markdown;
+    return { title, extractor: 'basic-html', text: sanitizeWebResearchText(output) };
   }
-  return { title: undefined, extractor: 'raw', text: String(raw || '').trim() };
+  if (lowerType.includes('xml') || looksLikeXml(raw)) {
+    return { title: undefined, extractor: 'xml-text', text: sanitizeWebResearchText(xmlToText(raw)) };
+  }
+  return { title: undefined, extractor: 'raw', text: sanitizeWebResearchText(String(raw || '').trim()) };
+}
+
+function sanitizeWebResearchText(text) {
+  const withoutLargeBlobs = removeLargeWebBlobs(text);
+  try {
+    const { sanitizeExternalContent } = require('./web-safety');
+    if (typeof sanitizeExternalContent === 'function') return sanitizeExternalContent(withoutLargeBlobs);
+  } catch {}
+  return withoutLargeBlobs;
+}
+
+function removeLargeWebBlobs(text) {
+  return String(text || '')
+    .replace(/data:[a-z0-9.+/-]+;base64,[a-z0-9+/=]{80,}/gi, '[REMOVED_DATA_URI]')
+    .replace(/\b[a-z0-9+/]{400,}={0,2}\b/gi, '[REMOVED_LONG_BASE64]');
+}
+
+function xmlToText(xml) {
+  let text = String(xml || '')
+    .replace(/<\?[\s\S]*?\?>/g, ' ')
+    .replace(/<!doctype\b[\s\S]*?>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1');
+
+  text = stripHiddenHtmlElements(stripUnsafeHtmlElements(text))
+    .replace(/<[^>]+>/g, ' ');
+
+  return normalizeExtractedText(decodeHtmlEntities(text));
 }
 
 function htmlToMarkdown(html, baseUrl) {
-  let text = String(html || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+  let text = stripHiddenHtmlElements(stripUnsafeHtmlElements(html))
     .replace(/<!--[\s\S]*?-->/g, ' ');
 
   text = text
@@ -1791,10 +1842,40 @@ function htmlToMarkdown(html, baseUrl) {
   return normalizeExtractedText(decodeHtmlEntities(text));
 }
 
+function stripUnsafeHtmlElements(html) {
+  return String(html || '')
+    .replace(/<head\b[\s\S]*?<\/head>/gi, ' ')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, ' ')
+    .replace(/<template\b[\s\S]*?<\/template>/gi, ' ')
+    .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, ' ')
+    .replace(/<object\b[\s\S]*?<\/object>/gi, ' ')
+    .replace(/<embed\b[^>]*>/gi, ' ')
+    .replace(/<canvas\b[\s\S]*?<\/canvas>/gi, ' ')
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<form\b[\s\S]*?<\/form>/gi, ' ')
+    .replace(/<(?:meta|link|base)\b[^>]*>/gi, ' ');
+}
+
+function stripHiddenHtmlElements(html) {
+  let text = String(html || '');
+  for (let index = 0; index < 5; index += 1) {
+    const next = text
+      .replace(/<([a-z][\w:-]*)\b(?=[^>]*\b(?:class|id)\s*=\s*(?:"[^"]*(?:\bhidden\b|\bsr-only\b|\bvisually-hidden\b|\bscreen-reader-text\b)[^"]*"|'[^']*(?:\bhidden\b|\bsr-only\b|\bvisually-hidden\b|\bscreen-reader-text\b)[^']*'|[^\s>]*(?:hidden|sr-only|visually-hidden|screen-reader-text)[^\s>]*))[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<[^>]*\b(?:class|id)\s*=\s*(?:"[^"]*(?:\bhidden\b|\bsr-only\b|\bvisually-hidden\b|\bscreen-reader-text\b)[^"]*"|'[^']*(?:\bhidden\b|\bsr-only\b|\bvisually-hidden\b|\bscreen-reader-text\b)[^']*'|[^\s>]*(?:hidden|sr-only|visually-hidden|screen-reader-text)[^\s>]*)[^>]*>/gi, ' ')
+      .replace(/<([a-z][\w:-]*)\b(?=[^>]*(?:\bhidden\b|\baria-hidden\s*=\s*(?:"true"|'true'|true)|\bstyle\s*=\s*(?:"[^"]*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^"]*"|'[^']*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^']*'|[^\s>]*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^\s>]*)))[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<[^>]*(?:\bhidden\b|\baria-hidden\s*=\s*(?:"true"|'true'|true)|\bstyle\s*=\s*(?:"[^"]*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^"]*"|'[^']*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^']*'|[^\s>]*(?:display\s*:\s*none|visibility\s*:\s*hidden)[^\s>]*))[^>]*>/gi, ' ');
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
 function htmlInlineToMarkdown(value, baseUrl) {
   return decodeHtmlEntities(String(value || '')
     .replace(/<a\b[^>]*href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>([\s\S]*?)<\/a>/gi, (_m, d, s, b, label) => {
-      const href = absolutizeUrl(d || s || b || '', baseUrl);
+      const href = safeMarkdownHref(d || s || b || '', baseUrl);
       const cleanLabel = stripHtml(label).trim() || href;
       return href ? `[${cleanLabel}](${href})` : cleanLabel;
     })
@@ -1886,11 +1967,21 @@ function findNearbySearchSnippet(source, fromIndex) {
 
 function isUsableSearchResult(url, title) {
   if (!url || !title || !/^https?:\/\//i.test(url)) return false;
+  if (!isSafeSearchResultUrl(url)) return false;
   try {
     const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
     return host !== 'duckduckgo.com' && host !== 'html.duckduckgo.com' && host !== 'lite.duckduckgo.com' && host !== 'bing.com';
   } catch {
     return false;
+  }
+}
+
+function isSafeSearchResultUrl(url) {
+  try {
+    const { isSafeHttpUrlSync } = require('./web-safety');
+    return typeof isSafeHttpUrlSync === 'function' ? isSafeHttpUrlSync(url) : true;
+  } catch {
+    return true;
   }
 }
 
@@ -1946,7 +2037,10 @@ function decodeBingUrl(url) {
 }
 
 function stripHtml(value) {
-  return normalizeExtractedText(decodeHtmlEntities(String(value || '').replace(/<[^>]+>/g, ' ')));
+  const text = stripHiddenHtmlElements(stripUnsafeHtmlElements(value))
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ');
+  return sanitizeWebResearchText(normalizeExtractedText(decodeHtmlEntities(text)));
 }
 
 function normalizeExtractedText(value) {
@@ -1967,8 +2061,18 @@ function looksLikeHtml(value) {
   return /^\s*(?:<!doctype\s+html|<html|<head|<body|<div|<p\b)/i.test(String(value || ''));
 }
 
+function looksLikeXml(value) {
+  return /^\s*(?:<\?xml|<rss\b|<feed\b|<urlset\b|<[a-z][\w:-]*(?:\s|>))/i.test(String(value || ''));
+}
+
 function normalizeContentType(value) {
   return String(value || '').split(';')[0].trim() || undefined;
+}
+
+function safeMarkdownHref(href, baseUrl) {
+  const url = absolutizeUrl(href, baseUrl);
+  if (!/^https?:\/\//i.test(url)) return '';
+  return isSafeSearchResultUrl(url) ? url : '';
 }
 
 function absolutizeUrl(href, baseUrl) {
@@ -2059,5 +2163,14 @@ function preview(value) {
 }
 
 module.exports = {
-  PiSdkSessionManager
+  PiSdkSessionManager,
+  __testing: {
+    extractWebContent,
+    htmlToMarkdown,
+    markdownToText,
+    sanitizeWebResearchText,
+    stripHtml,
+    isUsableSearchResult,
+    fetchUrl
+  }
 };

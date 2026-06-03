@@ -583,6 +583,7 @@ module.exports = {
   assertSafeWebUrl,
   installElectronSessionWebGuard,
   isSafeHttpUrlSync,
+  sanitizeExternalContent,
   wrapUntrustedWebContent,
   __testing: {
     normalizeHostname,
