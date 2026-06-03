@@ -1700,61 +1700,45 @@ async function assertSafeWebFetchTarget(url) {
   await assertSafeWebUrl(url);
 }
 
+// Used only by LLM-controlled web tools. Model/provider API calls are handled by the Pi SDK
+// transport and intentionally do not go through this private-network blocklist.
 async function fetchUrl(url, timeoutSecondsValue, signal, headers = {}) {
+  const { guardedFetchUrl } = require('./web-safety');
   const timeoutSeconds = clampInt(timeoutSecondsValue, 1, 120, 30);
-  const controller = new AbortController();
-  const onAbort = () => controller.abort();
-  const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
-  const enforceSafeRedirects = headers.safeRedirects === true;
-  signal?.addEventListener?.('abort', onAbort, { once: true });
-
-  try {
-    let currentUrl = String(url || '');
-    const visited = new Set();
-    for (let redirects = 0; redirects <= 20; redirects += 1) {
-      if (enforceSafeRedirects) await assertSafeWebFetchTarget(currentUrl);
-      if (visited.has(currentUrl)) throw new Error('Redirect loop detected');
-      visited.add(currentUrl);
-
-      const response = await fetch(currentUrl, {
-        method: 'GET',
-        redirect: enforceSafeRedirects ? 'manual' : 'follow',
-        signal: controller.signal,
-        headers: {
-          accept: headers.accept || '*/*',
-          'accept-language': 'en-US,en;q=0.9',
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36'
-        }
-      });
-      assertNotCancelled(signal);
-
-      if (!enforceSafeRedirects || !isFetchRedirectStatus(response.status)) return response;
-
-      const location = response.headers.get('location');
-      if (!location) return response;
-      currentUrl = new URL(location, currentUrl).toString();
+  const response = await guardedFetchUrl(url, {
+    timeoutSeconds,
+    maxRedirects: clampInt(headers.maxRedirects, 0, 20, 10),
+    maxBytes: WEB_MAX_RESPONSE_BYTES,
+    signal,
+    headers: {
+      accept: headers.accept || '*/*',
+      'accept-encoding': 'identity',
+      'accept-language': 'en-US,en;q=0.9',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36'
     }
-    throw new Error('Too many redirects');
-  } catch (error) {
-    if (signal?.aborted) throw new Error('Cancelled');
-    if (error?.name === 'AbortError') throw new Error(`web request timed out after ${timeoutSeconds}s.`);
-    throw error;
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener?.('abort', onAbort);
-  }
-}
+  });
 
-function isFetchRedirectStatus(status) {
-  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+  const text = String(response.text || '');
+  return {
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+    url: response.url,
+    bytesRead: response.bytesRead,
+    truncated: response.truncated,
+    redirects: response.redirects,
+    text: async () => text
+  };
 }
 
 async function readResponseTextLimited(response, maxBytes, signal) {
   assertNotCancelled(signal);
   if (!response.body || typeof response.body.getReader !== 'function') {
-    const text = await response.text();
+    const text = typeof response.text === 'function' ? await response.text() : String(response.text || '');
     assertNotCancelled(signal);
-    return { text, bytesRead: Buffer.byteLength(text, 'utf8'), truncated: false };
+    const bytesRead = Number.isFinite(Number(response.bytesRead)) ? Number(response.bytesRead) : Buffer.byteLength(text, 'utf8');
+    return { text, bytesRead, truncated: !!response.truncated };
   }
 
   const reader = response.body.getReader();

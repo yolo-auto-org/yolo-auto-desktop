@@ -126,25 +126,45 @@ assert.equal(__testing.isUsableSearchResult('http://127.0.0.1/private', 'Private
 assert.equal(__testing.isUsableSearchResult('http://localhost/private', 'Localhost source'), false);
 
 (async () => {
-  const originalFetch = global.fetch;
+  const { EventEmitter } = require('node:events');
+  const dns = require('node:dns/promises');
+  const http = require('node:http');
+  const originalLookup = dns.lookup;
+  const originalRequest = http.request;
   const calls = [];
-  global.fetch = async (url, options) => {
-    calls.push({ url: String(url), redirect: options?.redirect });
-    return new Response('', {
-      status: 302,
-      headers: { location: 'http://127.0.0.1/private' }
-    });
+
+  dns.lookup = async (hostname) => {
+    if (hostname === 'safe.example') return [{ address: '93.184.216.34', family: 4 }];
+    return originalLookup.call(dns, hostname, { all: true, verbatim: false });
+  };
+
+  http.request = (options, callback) => {
+    calls.push({ hostname: options.hostname, path: options.path });
+    const req = new EventEmitter();
+    req.end = () => {
+      const res = new EventEmitter();
+      res.statusCode = 302;
+      res.statusMessage = 'Found';
+      res.headers = { location: 'http://127.0.0.1/private' };
+      callback(res);
+      process.nextTick(() => res.emit('end'));
+    };
+    req.destroy = (error) => {
+      if (error) process.nextTick(() => req.emit('error', error));
+    };
+    return req;
   };
 
   try {
     await assert.rejects(
-      () => __testing.fetchUrl('https://example.com/redirect-to-private', 5, undefined, { safeRedirects: true }),
+      () => __testing.fetchUrl('http://safe.example/redirect-to-private', 5, undefined, { safeRedirects: true }),
       /Blocked|private|internal|special-use/i
     );
-    assert.equal(calls.length, 1, 'redirect target should be blocked before second fetch');
-    assert.equal(calls[0].redirect, 'manual');
+    assert.equal(calls.length, 1, 'redirect target should be blocked before second request');
+    assert.equal(calls[0].hostname, 'safe.example');
   } finally {
-    global.fetch = originalFetch;
+    dns.lookup = originalLookup;
+    http.request = originalRequest;
   }
 
   console.log('web research sanitizer regression passed');
