@@ -7,6 +7,22 @@ const { createLogger } = require('./logger');
 const { ensureHomeBase, getHomeWorkspacePath } = require('./home-base');
 const { THINKING_LEVELS, normalizeThinkingLevel } = require('./thinking-levels');
 const { PiSdkSessionManager } = require('./pi-sdk-session-manager');
+const {
+  validatePlainObject,
+  validateString,
+  validateNumberLike,
+  validateBoolean,
+  validateStringArray
+} = require('./ipc-validation');
+
+const MAX_PATH_CHARS = 4096;
+const MAX_SESSION_ID_CHARS = 4096;
+const MAX_CHAT_CHARS = 1_000_000;
+const MAX_API_KEY_CHARS = 20_000;
+const MAX_MODEL_CHARS = 512;
+const MAX_URL_CHARS = 2048;
+const MAX_QUERY_CHARS = 512;
+const MAX_SKILL_NAME_CHARS = 256;
 
 let mainWindow;
 let settings;
@@ -145,7 +161,7 @@ async function activeSessionPayload() {
 }
 
 async function setWorkspaceRoot(nextRoot) {
-  const root = String(nextRoot || '').trim();
+  const root = validatePathInput(nextRoot, 'workspaceRoot');
   if (!root) throw new Error('Workspace folder is empty.');
 
   workspaceRoot = root;
@@ -165,13 +181,14 @@ function setupIpc() {
   }));
 
   ipcMain.handle('settings:save', async (_event, nextSettings) => {
+    const safeSettings = validateSettingsInput(nextSettings);
     const patch = {
-      apiBaseUrl: String(nextSettings.apiBaseUrl || '').trim(),
-      model: String(nextSettings.model || '').trim(),
-      thinkingLevel: normalizeThinkingLevel(nextSettings.thinkingLevel, settings.thinkingLevel),
-      compatibilityPreset: normalizeCompatibilityPreset(nextSettings.compatibilityPreset, settings.compatibilityPreset),
-      maxConcurrency: normalizeMaxConcurrency(nextSettings.maxConcurrency, settings.maxConcurrency),
-      guardrails: normalizeGuardrails(nextSettings.guardrails, settings.guardrails)
+      apiBaseUrl: safeSettings.apiBaseUrl,
+      model: safeSettings.model,
+      thinkingLevel: normalizeThinkingLevel(safeSettings.thinkingLevel, settings.thinkingLevel),
+      compatibilityPreset: normalizeCompatibilityPreset(safeSettings.compatibilityPreset, settings.compatibilityPreset),
+      maxConcurrency: normalizeMaxConcurrency(safeSettings.maxConcurrency, settings.maxConcurrency),
+      guardrails: normalizeGuardrails(safeSettings.guardrails, settings.guardrails)
     };
 
     const needsReload = patch.apiBaseUrl !== String(settings.apiBaseUrl || '').trim()
@@ -189,7 +206,7 @@ function setupIpc() {
   });
 
   ipcMain.handle('settings:save-api-key', async (_event, apiKey) => {
-    const nextApiKey = String(apiKey || '').trim();
+    const nextApiKey = validateString(apiKey, 'apiKey', { max: MAX_API_KEY_CHARS });
     const needsReload = nextApiKey !== String(settings.apiKey || '').trim();
 
     if (needsReload && sessionManager.hasBusySessions()) {
@@ -228,7 +245,7 @@ function setupIpc() {
   });
 
   ipcMain.handle('sessions:select', async (_event, sessionId) => {
-    const session = await sessionManager.ensureSession(String(sessionId || ''));
+    const session = await sessionManager.ensureSession(validateSessionIdInput(sessionId));
     if (!session) throw new Error('Session not found.');
 
     activeSessionId = session.id;
@@ -239,12 +256,13 @@ function setupIpc() {
 
   ipcMain.handle('sessions:set-thinking-level', async (_event, sessionId, thinkingLevel) => {
     const id = await resolveSessionId(sessionId);
-    await sessionManager.updateSessionThinkingLevel(id, thinkingLevel);
+    const level = validateString(thinkingLevel, 'thinkingLevel', { max: 32 });
+    await sessionManager.updateSessionThinkingLevel(id, level);
     return activeSessionPayload();
   });
 
   ipcMain.handle('sessions:delete', async (_event, sessionId) => {
-    const id = String(sessionId || '');
+    const id = validateSessionIdInput(sessionId);
     if (!id) throw new Error('Session not found.');
 
     await sessionManager.deleteSession(id);
@@ -267,7 +285,7 @@ function setupIpc() {
     return setWorkspaceRoot(result.filePaths[0]);
   });
 
-  ipcMain.handle('workspace:set', async (_event, nextRoot) => setWorkspaceRoot(nextRoot));
+  ipcMain.handle('workspace:set', async (_event, nextRoot) => setWorkspaceRoot(validatePathInput(nextRoot, 'workspaceRoot')));
 
   ipcMain.handle('workspace:reveal', async () => {
     const session = await sessionManager.getSession(activeSessionId);
@@ -287,12 +305,12 @@ function setupIpc() {
   ipcMain.handle('workspace:file-suggestions', async (_event, sessionId, query) => {
     const id = await resolveSessionId(sessionId);
     const root = await sessionManager.getSessionWorkspace(id);
-    return listWorkspaceFileSuggestions(root, query);
+    return listWorkspaceFileSuggestions(root, validateQueryInput(query, 'query'));
   });
 
   ipcMain.handle('skills:suggestions', async (_event, sessionId, query) => {
     const id = await resolveSessionId(sessionId);
-    return sessionManager.listSkillSuggestions(id, query);
+    return sessionManager.listSkillSuggestions(id, validateQueryInput(query, 'query'));
   });
 
   ipcMain.handle('skills:list', async (_event, sessionId) => {
@@ -302,16 +320,19 @@ function setupIpc() {
 
   ipcMain.handle('skills:set-enabled', async (_event, sessionId, skillName, enabled) => {
     const id = await resolveSessionId(sessionId);
+    const name = validateSkillNameInput(skillName);
+    const isEnabled = validateBoolean(enabled, 'enabled');
     await assertAllSessionsIdle();
-    saveAppSettings({ skills: setSkillEntryEnabled(settings.skills, skillName, enabled) });
+    saveAppSettings({ skills: setSkillEntryEnabled(settings.skills, name, isEnabled) });
     await sessionManager.reloadActive();
     return sessionManager.listSkills(id);
   });
 
   ipcMain.handle('skills:set-extra-dirs', async (_event, sessionId, extraDirs) => {
     const id = await resolveSessionId(sessionId);
+    const dirs = validateStringArray(extraDirs, 'extraDirs', { maxItems: 100, maxItemLength: MAX_PATH_CHARS });
     await assertAllSessionsIdle();
-    saveAppSettings({ skills: setExtraSkillDirs(settings.skills, extraDirs) });
+    saveAppSettings({ skills: setExtraSkillDirs(settings.skills, dirs) });
     await sessionManager.reloadActive();
     return sessionManager.listSkills(id);
   });
@@ -355,6 +376,51 @@ function setupIpc() {
     saveAppSettings({ activeSessionId });
     return activeSessionPayload();
   });
+}
+
+function validateSettingsInput(value) {
+  const input = validatePlainObject(value, 'settings');
+  const guardrails = validateGuardrailsInput(input.guardrails);
+
+  return {
+    apiBaseUrl: validateString(input.apiBaseUrl ?? '', 'settings.apiBaseUrl', { max: MAX_URL_CHARS }),
+    model: validateString(input.model ?? '', 'settings.model', { max: MAX_MODEL_CHARS }),
+    thinkingLevel: validateString(input.thinkingLevel ?? '', 'settings.thinkingLevel', { max: 32 }),
+    compatibilityPreset: validateString(input.compatibilityPreset ?? '', 'settings.compatibilityPreset', { max: 64 }),
+    maxConcurrency: validateNumberLike(input.maxConcurrency, 'settings.maxConcurrency', { min: 1, max: 8 }),
+    guardrails
+  };
+}
+
+function validateGuardrailsInput(value) {
+  if (value === undefined || value === null) return { mode: '' };
+  if (typeof value === 'string') {
+    return { mode: validateString(value, 'settings.guardrails', { max: 32 }) };
+  }
+  const guardrails = validatePlainObject(value, 'settings.guardrails');
+  return {
+    mode: validateString(guardrails.mode ?? '', 'settings.guardrails.mode', { max: 32 })
+  };
+}
+
+function validatePathInput(value, name = 'path') {
+  return validateString(value, name, { max: MAX_PATH_CHARS });
+}
+
+function validateSessionIdInput(value) {
+  return validateString(value, 'sessionId', { max: MAX_SESSION_ID_CHARS });
+}
+
+function validateQueryInput(value, name = 'query') {
+  return validateString(value, name, { max: MAX_QUERY_CHARS });
+}
+
+function validateChatTextInput(value) {
+  return validateString(value, 'message', { max: MAX_CHAT_CHARS });
+}
+
+function validateSkillNameInput(value) {
+  return validateString(value, 'skillName', { max: MAX_SKILL_NAME_CHARS, required: true });
 }
 
 async function listWorkspaceFileSuggestions(root, query) {
@@ -423,18 +489,18 @@ async function parseChatArgs(maybeSessionId, maybeUserText) {
   if (maybeUserText === undefined) {
     return {
       sessionId: await resolveSessionId(),
-      text: String(maybeSessionId || '').trim()
+      text: validateChatTextInput(maybeSessionId)
     };
   }
 
   return {
     sessionId: await resolveSessionId(maybeSessionId),
-    text: String(maybeUserText || '').trim()
+    text: validateChatTextInput(maybeUserText)
   };
 }
 
 async function resolveSessionId(sessionId, options = {}) {
-  const requestedId = String(sessionId || '').trim();
+  const requestedId = validateSessionIdInput(sessionId);
   const select = options.select !== false;
   const session = await sessionManager.ensureSession(requestedId || activeSessionId || '', { select });
 
@@ -452,8 +518,7 @@ async function assertAllSessionsIdle() {
 }
 
 function setSkillEntryEnabled(currentSkills = {}, skillName, enabled) {
-  const name = String(skillName || '').trim();
-  if (!name) throw new Error('Skill not found.');
+  const name = validateSkillNameInput(skillName);
 
   const skills = normalizeSkillSettings(currentSkills);
   const entries = { ...skills.entries };
