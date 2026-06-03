@@ -1578,6 +1578,7 @@ async function toolWebFetch(args, signal) {
     throw new Error(`Invalid URL: ${args.url}`);
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('web_fetch only supports HTTP(S) URLs.');
+  await assertSafeWebFetchTarget(url.toString());
 
   const extractMode = args.extractMode === 'text' ? 'text' : 'markdown';
   const maxChars = clampInt(args.maxChars, 100, 500_000, TOOL_TEXT_LIMIT);
@@ -1673,6 +1674,11 @@ async function toolWebSearch(args, signal) {
     results,
     text
   };
+}
+
+async function assertSafeWebFetchTarget(url) {
+  const { assertSafeWebUrl } = require('./web-safety');
+  await assertSafeWebUrl(url);
 }
 
 async function fetchUrl(url, timeoutSecondsValue, signal, headers = {}) {

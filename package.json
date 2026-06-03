@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "start": "node scripts/ensure-electron.js && electron .",
-    "ensure-electron": "node scripts/ensure-electron.js"
+    "ensure-electron": "node scripts/ensure-electron.js",
+    "test:tool-calls": "node scripts/tool-call-regression.js"
   },
   "devDependencies": {
     "electron": "^42.3.0"

@@ -1,0 +1,96 @@
+{
+  "finalContent": {
+    "read": "Fixture final answer.",
+    "unsafeWebFetch": "Unsafe web fetch was blocked."
+  },
+  "privateFetchHits": 0,
+  "requestCount": 4,
+  "requestToolNames": [
+    [
+      "bash",
+      "browser",
+      "edit",
+      "find",
+      "get_web",
+      "grep",
+      "ls",
+      "read",
+      "web_fetch",
+      "web_search",
+      "write"
+    ],
+    [
+      "bash",
+      "browser",
+      "edit",
+      "find",
+      "get_web",
+      "grep",
+      "ls",
+      "read",
+      "web_fetch",
+      "web_search",
+      "write"
+    ],
+    [
+      "bash",
+      "browser",
+      "edit",
+      "find",
+      "get_web",
+      "grep",
+      "ls",
+      "read",
+      "web_fetch",
+      "web_search",
+      "write"
+    ],
+    [
+      "bash",
+      "browser",
+      "edit",
+      "find",
+      "get_web",
+      "grep",
+      "ls",
+      "read",
+      "web_fetch",
+      "web_search",
+      "write"
+    ]
+  ],
+  "toolStarts": [
+    {
+      "name": "read",
+      "args": {
+        "path": "README.md"
+      }
+    },
+    {
+      "name": "web_fetch",
+      "args": {
+        "url": "http://127.0.0.1:[PORT]/private",
+        "maxChars": 500
+      }
+    }
+  ],
+  "toolResults": [
+    {
+      "name": "read",
+      "ok": true,
+      "summary": "Read"
+    },
+    {
+      "name": "web_fetch",
+      "ok": false,
+      "summary": "Fetched"
+    }
+  ],
+  "assistantContents": [
+    "Fixture final answer.",
+    "Fixture final answer.",
+    "Unsafe web fetch was blocked.",
+    "Unsafe web fetch was blocked."
+  ],
+  "leakedAssistantMarkup": []
+}
