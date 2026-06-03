@@ -3,10 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';" />
   <title>yolo-auto desktop</title>
-  <script>
-    document.documentElement.dataset.theme = localStorage.getItem('yolo-theme') || 'dark';
-  </script>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
@@ -170,8 +168,10 @@
         </label>
         <label class="field">
           <span>API Key</span>
-          <input id="apiKeyInput" type="password" placeholder="sk-…" />
+          <input id="apiKeyInput" type="password" placeholder="sk-…" autocomplete="off" />
+          <small id="apiKeyStatus" class="field-hint">API key is stored in your YOLO Auto home folder.</small>
         </label>
+        <button id="clearApiKeyBtn" class="button button-ghost full" type="button">Clear saved API key</button>
         <label class="field two-col">
           <span>Model</span>
           <input id="modelInput" type="text" placeholder="gpt-4.1-mini" />

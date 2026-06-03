@@ -78,6 +78,8 @@ const els = {
   saveSettingsBtn: document.getElementById('saveSettingsBtn'),
   apiBaseUrlInput: document.getElementById('apiBaseUrlInput'),
   apiKeyInput: document.getElementById('apiKeyInput'),
+  apiKeyStatus: document.getElementById('apiKeyStatus'),
+  clearApiKeyBtn: document.getElementById('clearApiKeyBtn'),
   modelInput: document.getElementById('modelInput'),
   settingsThinkingLevelInput: document.getElementById('settingsThinkingLevelInput'),
   compatibilityPresetInput: document.getElementById('compatibilityPresetInput'),
@@ -221,6 +223,7 @@ function bindEvents() {
   els.cancelSettingsBtn.addEventListener('click', closeSettings);
 
   els.saveSettingsBtn.addEventListener('click', saveSettings);
+  if (els.clearApiKeyBtn) els.clearApiKeyBtn.addEventListener('click', clearApiKey);
   els.resetBtn.addEventListener('click', async () => {
     if (state.busy) {
       await cancelRun();
@@ -2020,7 +2023,8 @@ function summarizeArgs(name, args = {}) {
 
 async function openSettings(tab = 'model') {
   els.apiBaseUrlInput.value = state.settings.apiBaseUrl || '';
-  els.apiKeyInput.value = state.settings.apiKey || '';
+  els.apiKeyInput.value = '';
+  updateApiKeyUi();
   els.modelInput.value = state.settings.model || '';
   els.settingsThinkingLevelInput.value = normalizeThinkingLevel(state.settings.thinkingLevel);
   if (els.compatibilityPresetInput) els.compatibilityPresetInput.value = normalizeCompatibilityPreset(state.settings.compatibilityPreset);
@@ -2086,9 +2090,9 @@ function applyTheme(theme) {
 }
 
 async function saveSettings() {
+  const apiKey = els.apiKeyInput.value.trim();
   const next = {
     apiBaseUrl: els.apiBaseUrlInput.value.trim(),
-    apiKey: els.apiKeyInput.value.trim(),
     model: els.modelInput.value.trim(),
     thinkingLevel: normalizeThinkingLevel(els.settingsThinkingLevelInput.value),
     compatibilityPreset: normalizeCompatibilityPreset(els.compatibilityPresetInput?.value),
@@ -2100,13 +2104,51 @@ async function saveSettings() {
 
   try {
     state.settings = await window.yolo.saveSettings(next);
+    if (apiKey) state.settings = await window.yolo.saveApiKey(apiKey);
+    if (els.apiKeyInput) els.apiKeyInput.value = '';
     state.concurrency.maxConcurrency = normalizeMaxConcurrency(state.settings.maxConcurrency);
+    updateApiKeyUi();
     renderChrome();
     renderRunningSessions();
     closeSettings();
-    setStatus('Settings saved');
+    setStatus(apiKey ? 'Settings and API key saved' : 'Settings saved');
   } catch (error) {
     setStatus(error.message || 'Failed to save settings');
+  }
+}
+
+async function clearApiKey() {
+  if (!state.settings.apiKeyConfigured) {
+    if (els.apiKeyInput) els.apiKeyInput.value = '';
+    updateApiKeyUi();
+    setStatus('No saved API key to clear');
+    return;
+  }
+
+  try {
+    state.settings = await window.yolo.clearApiKey();
+    if (els.apiKeyInput) els.apiKeyInput.value = '';
+    updateApiKeyUi();
+    renderChrome();
+    setStatus('API key cleared');
+  } catch (error) {
+    setStatus(error.message || 'Failed to clear API key');
+  }
+}
+
+function updateApiKeyUi() {
+  const configured = !!state.settings.apiKeyConfigured;
+  if (els.apiKeyInput) {
+    els.apiKeyInput.placeholder = configured ? 'Configured — leave blank to keep current key' : 'sk-…';
+  }
+  if (els.apiKeyStatus) {
+    els.apiKeyStatus.textContent = configured
+      ? 'API key is configured and is not shown here. Saved keys live in your YOLO Auto home folder.'
+      : 'No API key saved. Enter one to store it in your YOLO Auto home folder.';
+  }
+  if (els.clearApiKeyBtn) {
+    els.clearApiKeyBtn.disabled = !configured;
+    els.clearApiKeyBtn.textContent = configured ? 'Clear API key' : 'No API key saved';
   }
 }
 

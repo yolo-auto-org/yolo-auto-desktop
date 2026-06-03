@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('yolo', {
   bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  saveApiKey: (apiKey) => ipcRenderer.invoke('settings:save-api-key', apiKey),
+  clearApiKey: () => ipcRenderer.invoke('settings:clear-api-key'),
   selectWorkspace: () => ipcRenderer.invoke('workspace:select'),
   setWorkspace: (workspaceRoot) => ipcRenderer.invoke('workspace:set', workspaceRoot),
   revealWorkspace: () => ipcRenderer.invoke('workspace:reveal'),

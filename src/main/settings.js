@@ -90,7 +90,8 @@ function saveSettings(nextSettings) {
   let storedKey = loadStoredApiKey();
 
   if (Object.prototype.hasOwnProperty.call(source, 'apiKey')) {
-    storedKey = saveStoredApiKey(source.apiKey);
+    const nextApiKey = normalizeApiKey(source.apiKey);
+    storedKey = nextApiKey ? saveStoredApiKey(nextApiKey) : clearStoredApiKey();
     delete source.apiKey;
   }
 
@@ -169,6 +170,15 @@ function saveStoredApiKey(value) {
   return { found: true, apiKey };
 }
 
+function clearStoredApiKey() {
+  try {
+    fs.rmSync(apiKeysPath(), { force: true });
+  } catch {
+    // Clearing the key should be best-effort; settings will still stop carrying it.
+  }
+  return { found: false, apiKey: '' };
+}
+
 function migrateLegacyApiKey(saved, storedKey) {
   if (!saved || typeof saved !== 'object' || !Object.prototype.hasOwnProperty.call(saved, 'apiKey')) {
     return { settings: saved, migratedApiKey: storedKey };
@@ -180,7 +190,7 @@ function migrateLegacyApiKey(saved, storedKey) {
 
   if (!migratedApiKey.found) {
     try {
-      migratedApiKey = saveStoredApiKey(legacyKey);
+      migratedApiKey = legacyKey ? saveStoredApiKey(legacyKey) : clearStoredApiKey();
     } catch {
       // Keep using the legacy key for this run if migration cannot write the home-base file.
       // Leave the old settings file untouched so the key is not lost.
@@ -215,5 +225,6 @@ module.exports = {
   normalizeCompatibilityPreset,
   normalizeMaxConcurrency,
   normalizeGuardrails,
-  apiKeysPath
+  apiKeysPath,
+  clearStoredApiKey
 };

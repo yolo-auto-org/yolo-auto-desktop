@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const { loadSettings, saveSettings, normalizeCompatibilityPreset, normalizeGuardrails, normalizeMaxConcurrency } = require('./settings');
 const { createLogger } = require('./logger');
@@ -27,17 +28,49 @@ function createWindow() {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   });
 
+  setupMainWindowSecurity(mainWindow);
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+}
+
+function setupMainWindowSecurity(window) {
+  const rendererUrl = pathToFileURL(path.join(__dirname, '..', 'renderer', 'index.html')).toString();
+
+  window.webContents.on('will-navigate', (event, url) => {
+    if (url === rendererUrl) return;
+    event.preventDefault();
+    openExternalUrl(url);
+  });
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalUrl(url);
+    return { action: 'deny' };
+  });
+
+  window.webContents.on('will-attach-webview', (event) => event.preventDefault());
+  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+}
+
+function openExternalUrl(rawUrl) {
+  try {
+    const url = new URL(String(rawUrl || ''));
+    if (['http:', 'https:', 'mailto:'].includes(url.protocol)) {
+      shell.openExternal(url.toString()).catch((error) => {
+        logger('warn', 'shell:open-external-failed', { error: error?.message || String(error) });
+      });
+    }
+  } catch {
+    // Ignore invalid or unsupported external navigation attempts.
+  }
 }
 
 function publicSettings() {
   return {
     apiBaseUrl: settings.apiBaseUrl || '',
-    apiKey: settings.apiKey || '',
+    apiKeyConfigured: !!String(settings.apiKey || '').trim(),
     model: settings.model || '',
     thinkingLevel: normalizeThinkingLevel(settings.thinkingLevel),
     compatibilityPreset: normalizeCompatibilityPreset(settings.compatibilityPreset),
@@ -134,7 +167,6 @@ function setupIpc() {
   ipcMain.handle('settings:save', async (_event, nextSettings) => {
     const patch = {
       apiBaseUrl: String(nextSettings.apiBaseUrl || '').trim(),
-      apiKey: String(nextSettings.apiKey || '').trim(),
       model: String(nextSettings.model || '').trim(),
       thinkingLevel: normalizeThinkingLevel(nextSettings.thinkingLevel, settings.thinkingLevel),
       compatibilityPreset: normalizeCompatibilityPreset(nextSettings.compatibilityPreset, settings.compatibilityPreset),
@@ -143,7 +175,6 @@ function setupIpc() {
     };
 
     const needsReload = patch.apiBaseUrl !== String(settings.apiBaseUrl || '').trim()
-      || patch.apiKey !== String(settings.apiKey || '').trim()
       || patch.model !== String(settings.model || '').trim()
       || patch.compatibilityPreset !== normalizeCompatibilityPreset(settings.compatibilityPreset);
 
@@ -154,6 +185,31 @@ function setupIpc() {
     saveAppSettings(patch);
 
     if (needsReload) await sessionManager.reloadActive();
+    return publicSettings();
+  });
+
+  ipcMain.handle('settings:save-api-key', async (_event, apiKey) => {
+    const nextApiKey = String(apiKey || '').trim();
+    const needsReload = nextApiKey !== String(settings.apiKey || '').trim();
+
+    if (needsReload && sessionManager.hasBusySessions()) {
+      throw new Error('Cancel running sessions before changing the API key.');
+    }
+
+    saveAppSettings({ apiKey: nextApiKey });
+    if (needsReload) await sessionManager.reloadActive();
+    return publicSettings();
+  });
+
+  ipcMain.handle('settings:clear-api-key', async () => {
+    const hadApiKey = !!String(settings.apiKey || '').trim();
+
+    if (hadApiKey && sessionManager.hasBusySessions()) {
+      throw new Error('Cancel running sessions before clearing the API key.');
+    }
+
+    saveAppSettings({ apiKey: '' });
+    if (hadApiKey) await sessionManager.reloadActive();
     return publicSettings();
   });
 
