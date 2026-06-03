@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { app } = require('electron');
-const { getHomeWorkspacePath } = require('./home-base');
+const { getHomeBasePath, getHomeWorkspacePath } = require('./home-base');
 const { normalizeThinkingLevel } = require('./thinking-levels');
 const { normalizeGuardrails } = require('./command-guardrails');
 
@@ -9,6 +9,7 @@ const COMPATIBILITY_PRESETS = new Set(['openai', 'local-basic']);
 const DEFAULT_MAX_CONCURRENCY = 2;
 const MIN_MAX_CONCURRENCY = 1;
 const MAX_MAX_CONCURRENCY = 8;
+const API_KEYS_FILENAME = 'api-keys.json';
 
 function normalizeCompatibilityPreset(value, fallback = 'openai') {
   const raw = String(value || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
@@ -20,6 +21,10 @@ function normalizeCompatibilityPreset(value, fallback = 'openai') {
 
 function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function apiKeysPath() {
+  return path.join(getHomeBasePath(), API_KEYS_FILENAME);
 }
 
 function normalizeMaxConcurrency(value, fallback = DEFAULT_MAX_CONCURRENCY) {
@@ -61,55 +66,146 @@ function getDefaultGuardrails() {
 
 function loadSettings() {
   const defaults = getDefaultSettings();
+  const storedKey = loadStoredApiKey();
 
   try {
     const raw = fs.readFileSync(settingsPath(), 'utf8');
     const saved = JSON.parse(raw);
-    return mergeSettings(defaults, saved);
+    const { settings: sanitizedSaved, migratedApiKey } = migrateLegacyApiKey(saved, storedKey);
+    const merged = mergeSettings(defaults, sanitizedSaved);
+    return {
+      ...merged,
+      apiKey: migratedApiKey.found ? migratedApiKey.apiKey : defaults.apiKey
+    };
   } catch {
-    return defaults;
+    return {
+      ...defaults,
+      apiKey: storedKey.found ? storedKey.apiKey : defaults.apiKey
+    };
   }
 }
 
 function saveSettings(nextSettings) {
-  const merged = mergeSettings(getDefaultSettings(), nextSettings);
+  const source = nextSettings && typeof nextSettings === 'object' ? { ...nextSettings } : {};
+  let storedKey = loadStoredApiKey();
+
+  if (Object.prototype.hasOwnProperty.call(source, 'apiKey')) {
+    storedKey = saveStoredApiKey(source.apiKey);
+    delete source.apiKey;
+  }
+
+  const merged = mergeSettings(getDefaultSettings(), source);
+  const withApiKey = {
+    ...merged,
+    apiKey: storedKey.found ? storedKey.apiKey : merged.apiKey
+  };
+
   fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
-  fs.writeFileSync(settingsPath(), JSON.stringify(merged, null, 2));
-  return merged;
+  fs.writeFileSync(settingsPath(), JSON.stringify(stripApiKey(withApiKey), null, 2));
+  return withApiKey;
 }
 
 function mergeSettings(defaults, saved = {}) {
+  const source = saved && typeof saved === 'object' ? saved : {};
   const merged = {
     ...defaults,
-    ...saved,
-    thinkingLevel: normalizeThinkingLevel(saved.thinkingLevel, defaults.thinkingLevel),
-    compatibilityPreset: normalizeCompatibilityPreset(saved.compatibilityPreset, defaults.compatibilityPreset),
-    maxConcurrency: normalizeMaxConcurrency(saved.maxConcurrency, defaults.maxConcurrency),
-    guardrails: normalizeGuardrails(saved.guardrails, defaults.guardrails),
+    ...source,
+    thinkingLevel: normalizeThinkingLevel(source.thinkingLevel, defaults.thinkingLevel),
+    compatibilityPreset: normalizeCompatibilityPreset(source.compatibilityPreset, defaults.compatibilityPreset),
+    maxConcurrency: normalizeMaxConcurrency(source.maxConcurrency, defaults.maxConcurrency),
+    guardrails: normalizeGuardrails(source.guardrails, defaults.guardrails),
     skills: {
       ...defaults.skills,
-      ...(saved.skills || {}),
+      ...(source.skills || {}),
       entries: {
         ...(defaults.skills?.entries || {}),
-        ...(saved.skills?.entries || {})
+        ...(source.skills?.entries || {})
       },
       load: {
         ...(defaults.skills?.load || {}),
-        ...(saved.skills?.load || {})
+        ...(source.skills?.load || {})
       }
     },
     agents: {
       ...defaults.agents,
-      ...(saved.agents || {}),
+      ...(source.agents || {}),
       defaults: {
         ...(defaults.agents?.defaults || {}),
-        ...(saved.agents?.defaults || {})
+        ...(source.agents?.defaults || {})
       },
-      list: saved.agents?.list || defaults.agents?.list
+      list: source.agents?.list || defaults.agents?.list
     }
   };
 
   return merged;
+}
+
+function loadStoredApiKey() {
+  try {
+    const raw = fs.readFileSync(apiKeysPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && Object.prototype.hasOwnProperty.call(parsed, 'apiKey')) {
+      return { found: true, apiKey: normalizeApiKey(parsed.apiKey) };
+    }
+    if (typeof parsed === 'string') return { found: true, apiKey: normalizeApiKey(parsed) };
+  } catch {}
+
+  return { found: false, apiKey: '' };
+}
+
+function saveStoredApiKey(value) {
+  const apiKey = normalizeApiKey(value);
+  const filePath = apiKeysPath();
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify({ apiKey, updatedAt: new Date().toISOString() }, null, 2), {
+    encoding: 'utf8',
+    mode: 0o600
+  });
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Some filesystems/platforms do not support chmod; the file still lives in the user's home base.
+  }
+  return { found: true, apiKey };
+}
+
+function migrateLegacyApiKey(saved, storedKey) {
+  if (!saved || typeof saved !== 'object' || !Object.prototype.hasOwnProperty.call(saved, 'apiKey')) {
+    return { settings: saved, migratedApiKey: storedKey };
+  }
+
+  const legacyKey = normalizeApiKey(saved.apiKey);
+  const settings = stripApiKey(saved);
+  let migratedApiKey = storedKey;
+
+  if (!migratedApiKey.found) {
+    try {
+      migratedApiKey = saveStoredApiKey(legacyKey);
+    } catch {
+      // Keep using the legacy key for this run if migration cannot write the home-base file.
+      // Leave the old settings file untouched so the key is not lost.
+      return { settings: saved, migratedApiKey: { found: true, apiKey: legacyKey } };
+    }
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
+    fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
+  } catch {
+    // If legacy cleanup fails, do not block startup; future saves will write sanitized settings.
+  }
+
+  return { settings, migratedApiKey };
+}
+
+function stripApiKey(settings) {
+  const source = settings && typeof settings === 'object' ? settings : {};
+  const { apiKey, ...withoutApiKey } = source;
+  return withoutApiKey;
+}
+
+function normalizeApiKey(value) {
+  return String(value || '').trim();
 }
 
 module.exports = {
@@ -118,5 +214,6 @@ module.exports = {
   saveSettings,
   normalizeCompatibilityPreset,
   normalizeMaxConcurrency,
-  normalizeGuardrails
+  normalizeGuardrails,
+  apiKeysPath
 };

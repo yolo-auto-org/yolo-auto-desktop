@@ -18,7 +18,7 @@ npm start
 Open Settings in the app and enter an OpenAI-compatible endpoint:
 
 - API Base URL: `https://api.openai.com/v1` or your yolo-auto endpoint
-- API Key
+- API Key (stored at `~/.yolo-auto-desktop/api-keys.json`)
 - Model
 - Default thinking level (`none`, `low`, `medium`, `high`, `xhigh`)
 
