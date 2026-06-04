@@ -1,22 +1,70 @@
 {
   "name": "yolo-auto-desktop",
   "version": "0.1.0",
-  "description": "A local desktop personal assistant for everyday computer tasks.",
+  "description": "Local desktop AI assistant for everyday computer tasks and coding work.",
   "main": "src/main/index.js",
-  "private": true,
   "scripts": {
     "start": "node scripts/ensure-electron.js && electron .",
     "ensure-electron": "node scripts/ensure-electron.js",
+    "icons": "node scripts/generate-icons.js",
+    "check:syntax": "node scripts/check-js-syntax.js",
     "test": "npm run test:tool-calls && npm run test:web-safety && npm run test:electron-browser",
     "test:tool-calls": "node scripts/tool-call-regression.js",
     "test:web-safety": "node scripts/web-research-sanitizer-regression.js",
-    "test:electron-browser": "node scripts/electron-browser-guard-regression.js"
+    "test:electron-browser": "npm run ensure-electron && node scripts/electron-browser-guard-regression.js",
+    "check": "npm run check:syntax && npm test",
+    "dist:dir": "npm run icons && electron-builder --config electron-builder.config.cjs --dir",
+    "dist": "npm run icons && electron-builder --config electron-builder.config.cjs",
+    "dist:win": "npm run icons && electron-builder --config electron-builder.config.cjs --win",
+    "dist:mac": "npm run icons && electron-builder --config electron-builder.config.cjs --mac",
+    "dist:linux": "npm run icons && electron-builder --config electron-builder.config.cjs --linux",
+    "release:check": "node scripts/verify-release-env.js"
   },
   "devDependencies": {
-    "electron": "^42.3.0"
+    "electron": "^42.3.3",
+    "electron-builder": "^26.8.1",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.78.0",
     "typebox": "^1.1.38"
-  }
+  },
+  "productName": "YOLO Auto Desktop",
+  "author": "YOLO Auto",
+  "license": "UNLICENSED",
+  "homepage": "https://github.com/yolo-auto-org/yolo-auto-desktop#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yolo-auto-org/yolo-auto-desktop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yolo-auto-org/yolo-auto-desktop/issues"
+  },
+  "keywords": [
+    "electron",
+    "desktop",
+    "ai",
+    "agent",
+    "automation",
+    "coding-agent",
+    "openai-compatible"
+  ],
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src/**/*",
+    "scripts/**/*.js",
+    "tests/fixtures/**/*",
+    "config/entitlements.mac.plist",
+    "electron-builder.config.cjs",
+    "docs/**/*.md",
+    "README.md",
+    "LICENSE"
+  ]
 }

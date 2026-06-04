@@ -104,7 +104,14 @@ async function init() {
   applySidebarState();
   bindEvents();
   setInterval(renderSessions, 60_000);
-  window.yolo.onAgentEvent(handleAgentEvent);
+  window.yolo.onAgentEvent((event) => {
+    try {
+      handleAgentEvent(event);
+    } catch (error) {
+      console.error('Failed to render agent event', event, error);
+      setStatus(`Event render error: ${error?.message || String(error)}`);
+    }
+  });
 
   try {
     const bootstrap = await window.yolo.bootstrap();

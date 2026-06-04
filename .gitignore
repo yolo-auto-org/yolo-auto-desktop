@@ -1,7 +1,30 @@
 node_modules/
-dist/
-out/
 .DS_Store
 *.log
 .env
 .env.*
+
+# Generated release/build artifacts
+dist/
+out/
+release/
+build/
+*.tgz
+*.blockmap
+latest*.yml
+builder-debug.yml
+
+# Root-level installer/archive outputs if electron-builder is run with a different output dir
+/*.exe
+/*.msi
+/*.dmg
+/*.pkg
+/*.AppImage
+/*.deb
+/*.rpm
+/*.snap
+/*.zip
+
+# Generated icon assets
+*.ico
+*.icns

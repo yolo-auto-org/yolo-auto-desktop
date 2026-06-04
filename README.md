@@ -6,7 +6,11 @@ YOLO Auto is a desktop agent shell for both everyday computer chores and serious
 
 The runtime is now built on the Pi coding-agent SDK, so coding workflows get Pi's production-grade session, tool, skill, extension, and compaction foundations while the UI stays desktop-friendly.
 
-## Run locally
+## Install
+
+Public desktop installers are built from GitHub Actions and attached to GitHub Releases as draft artifacts first. See `docs/release.md` for the launch checklist. Unsigned/free builds are supported; Windows/macOS will show OS trust warnings until you add paid code signing/notarization.
+
+For local development:
 
 ```bash
 npm install
@@ -14,6 +18,18 @@ npm start
 ```
 
 `npm start` first runs `scripts/ensure-electron.js`, which downloads/extracts the Electron binary if npm did not do it correctly.
+
+## Build installers
+
+```bash
+npm run check
+npm run dist:dir      # unpacked smoke build
+npm run dist:win      # Windows NSIS/zip, on Windows
+npm run dist:mac      # macOS dmg/zip, on macOS with signing/notarization for public release
+npm run dist:linux    # AppImage/deb/rpm, on Linux
+```
+
+Release artifacts are written to `release/`.
 
 Open Settings in the app and enter an OpenAI-compatible endpoint:
 

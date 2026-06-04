@@ -83,6 +83,51 @@ function openExternalUrl(rawUrl) {
   }
 }
 
+function emitAgentEvent(payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  try {
+    mainWindow.webContents.send('agent:event', toIpcSafePayload(payload));
+  } catch (error) {
+    logger('error', 'agent:event:send-failed', {
+      type: payload?.type || '',
+      sessionId: payload?.sessionId || '',
+      error: error?.message || String(error)
+    });
+  }
+}
+
+function toIpcSafePayload(value, depth = 0, seen = new WeakSet()) {
+  if (depth > 8) return '[MaxDepth]';
+  if (value === null || value === undefined) return value;
+
+  const type = typeof value;
+  if (type === 'string' || type === 'number' || type === 'boolean') return value;
+  if (type === 'bigint') return value.toString();
+  if (type === 'symbol' || type === 'function') return undefined;
+
+  if (value instanceof Error) {
+    return { name: value.name || 'Error', message: value.message || String(value) };
+  }
+  if (value instanceof Date) return value.toISOString();
+  if (Buffer.isBuffer(value)) return value.toString('utf8');
+  if (Array.isArray(value)) return value.map((entry) => toIpcSafePayload(entry, depth + 1, seen));
+
+  if (type === 'object') {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    const output = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const safe = toIpcSafePayload(entry, depth + 1, seen);
+      if (safe !== undefined) output[key] = safe;
+    }
+    seen.delete(value);
+    return output;
+  }
+
+  return String(value);
+}
+
 function publicSettings() {
   return {
     apiBaseUrl: settings.apiBaseUrl || '',
@@ -587,7 +632,7 @@ app.whenReady().then(async () => {
     agentDir: homeBaseRoot,
     getSettings: () => settings,
     getDefaultWorkspaceRoot: () => workspaceRoot || homeBaseRoot,
-    emit: (payload) => mainWindow?.webContents.send('agent:event', payload),
+    emit: emitAgentEvent,
     requestCommandApproval,
     log: logger
   });
