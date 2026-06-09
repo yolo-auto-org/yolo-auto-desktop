@@ -1,4 +1,17 @@
 const THINKING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'];
+const FALLBACK_TOOL_DEFINITIONS = [
+  { name: 'read', label: 'Read files', group: 'Filesystem read', description: 'Read text files and supported images from the workspace.' },
+  { name: 'grep', label: 'Search file text', group: 'Filesystem read', description: 'Search file contents for matching text.' },
+  { name: 'find', label: 'Find files', group: 'Filesystem read', description: 'Find files and folders by path/name.' },
+  { name: 'ls', label: 'List folders', group: 'Filesystem read', description: 'List directory contents.' },
+  { name: 'write', label: 'Write files', group: 'Filesystem write', description: 'Create or overwrite files.' },
+  { name: 'edit', label: 'Edit files', group: 'Filesystem write', description: 'Patch existing files with exact text replacements.' },
+  { name: 'bash', label: 'Shell / exec', group: 'Shell', description: 'Run terminal commands through the AI bash tool.' },
+  { name: 'web_search', label: 'Web search', group: 'Web', description: 'Search the web for titles, URLs, and snippets.' },
+  { name: 'web_fetch', label: 'Web fetch', group: 'Web', description: 'Fetch one URL and return cleaned readable text/markdown.' },
+  { name: 'get_web', label: 'Get web compatibility', group: 'Web', description: 'Compatibility wrapper for web_search/web_fetch. Disabled automatically unless both are enabled.' },
+  { name: 'browser', label: 'Browser automation', group: 'Browser', description: 'Open live pages and interact with visible controls.' }
+];
 const RECENT_SESSION_LIMIT = 5;
 const BOTTOM_SCROLL_THRESHOLD = 32;
 const SESSION_REVIEW_STORAGE_KEY = 'yolo-session-reviews';
@@ -66,6 +79,8 @@ const els = {
   skillsList: document.getElementById('skillsList'),
   skillsStatus: document.getElementById('skillsStatus'),
   skillsExtraDirsInput: document.getElementById('skillsExtraDirsInput'),
+  toolsList: document.getElementById('toolsList'),
+  toolsStatus: document.getElementById('toolsStatus'),
   promptInput: document.getElementById('promptInput'),
   sendBtn: document.getElementById('sendBtn'),
   followUpBtn: document.getElementById('followUpBtn'),
@@ -120,7 +135,10 @@ async function init() {
     state.homeBaseRoot = bootstrap.homeBaseRoot || '';
     state.workspaceRoot = bootstrap.workspaceRoot || '';
     applySessionPayload(bootstrap);
-    renderMessagesFromHistory(bootstrap.active?.messages || [], { partialAssistantText: bootstrap.active?.partialAssistantText || '' });
+    renderMessagesFromHistory(bootstrap.active?.messages || [], {
+      partialAssistantText: bootstrap.active?.partialAssistantText || '',
+      partialAssistantThinkingText: bootstrap.active?.partialAssistantThinkingText || ''
+    });
     renderChrome();
   } catch (error) {
     setStatus(error.message || 'Failed to load app');
@@ -619,7 +637,10 @@ async function createNewSession() {
     const payload = await window.yolo.createSession();
     applySessionPayload(payload);
     state.currentAssistant = null;
-    renderMessagesFromHistory(payload.active?.messages || [], { partialAssistantText: payload.active?.partialAssistantText || '' });
+    renderMessagesFromHistory(payload.active?.messages || [], {
+      partialAssistantText: payload.active?.partialAssistantText || '',
+      partialAssistantThinkingText: payload.active?.partialAssistantThinkingText || ''
+    });
     renderChrome();
     setStatus('New session');
   } catch (error) {
@@ -640,7 +661,10 @@ async function selectSession(sessionId) {
     applySessionPayload(payload);
     if (payload.active?.session) markSessionReviewed(payload.active.session);
     state.currentAssistant = null;
-    renderMessagesFromHistory(payload.active?.messages || [], { partialAssistantText: payload.active?.partialAssistantText || '' });
+    renderMessagesFromHistory(payload.active?.messages || [], {
+      partialAssistantText: payload.active?.partialAssistantText || '',
+      partialAssistantThinkingText: payload.active?.partialAssistantThinkingText || ''
+    });
     renderChrome();
     setStatus(state.busy ? 'Working…' : 'Ready');
     return true;
@@ -897,6 +921,124 @@ async function saveSkillDirs() {
     state.skills = { ...state.skills, loading: false, error: error.message || 'Failed to save skill folders' };
     renderSkillsPane();
   }
+}
+
+function renderToolsPane() {
+  if (!els.toolsList) return;
+
+  const tools = getToolDefinitions();
+  els.toolsList.innerHTML = '';
+
+  if (!tools.length) {
+    els.toolsList.innerHTML = '<div class="sessions-empty">No tools found</div>';
+    if (els.toolsStatus) els.toolsStatus.textContent = 'No tools available';
+    return;
+  }
+
+  let lastGroup = '';
+  for (const tool of tools) {
+    const group = tool.group || 'Tools';
+    if (group !== lastGroup) {
+      const heading = document.createElement('div');
+      heading.className = 'tool-group-heading';
+      heading.textContent = group;
+      els.toolsList.appendChild(heading);
+      lastGroup = group;
+    }
+    els.toolsList.appendChild(createToolManageItem(tool));
+  }
+
+  updateToolsStatus();
+}
+
+function createToolManageItem(tool) {
+  const item = document.createElement('div');
+  const enabled = isToolEnabled(tool.name);
+  item.className = `skill-manage-item${enabled ? '' : ' disabled'}`;
+
+  const copy = document.createElement('div');
+  copy.className = 'skill-manage-copy';
+
+  const title = document.createElement('div');
+  title.className = 'skill-manage-title';
+  title.textContent = tool.label ? `${tool.label} (${tool.name})` : tool.name;
+
+  const description = document.createElement('div');
+  description.className = 'skill-manage-description';
+  description.textContent = tool.description || 'Model tool';
+
+  const meta = document.createElement('div');
+  meta.className = 'skill-manage-meta';
+  meta.textContent = tool.name === 'get_web'
+    ? 'compatibility wrapper · requires web_search and web_fetch'
+    : tool.name;
+
+  copy.appendChild(title);
+  copy.appendChild(description);
+  copy.appendChild(meta);
+
+  const toggle = document.createElement('label');
+  toggle.className = 'toggle';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.dataset.toolName = tool.name;
+  input.checked = enabled;
+  input.addEventListener('change', () => {
+    item.classList.toggle('disabled', !input.checked);
+    updateToolsStatus();
+  });
+  const slider = document.createElement('span');
+  slider.className = 'toggle-slider';
+  toggle.appendChild(input);
+  toggle.appendChild(slider);
+
+  item.appendChild(copy);
+  item.appendChild(toggle);
+  return item;
+}
+
+function updateToolsStatus() {
+  if (!els.toolsStatus) return;
+  const tools = getToolDefinitions();
+  const settings = collectToolSettingsFromUi();
+  const enabledCount = tools.filter((tool) => settings.entries?.[tool.name]?.enabled !== false).length;
+  const getWebConfigured = settings.entries?.get_web?.enabled !== false;
+  const getWebExposed = getWebConfigured
+    && settings.entries?.web_search?.enabled !== false
+    && settings.entries?.web_fetch?.enabled !== false;
+  const effectiveCount = enabledCount - (getWebConfigured && !getWebExposed ? 1 : 0);
+  els.toolsStatus.textContent = `${enabledCount}/${tools.length} tools enabled${effectiveCount !== enabledCount ? ` · ${effectiveCount} exposed after dependencies` : ''}`;
+}
+
+function getToolDefinitions() {
+  const fromSettings = Array.isArray(state.settings.toolDefinitions) ? state.settings.toolDefinitions : [];
+  const normalized = fromSettings
+    .map((tool) => ({
+      name: String(tool?.name || '').trim(),
+      label: String(tool?.label || '').trim(),
+      group: String(tool?.group || '').trim(),
+      description: String(tool?.description || '').trim()
+    }))
+    .filter((tool) => tool.name);
+  return normalized.length ? normalized : FALLBACK_TOOL_DEFINITIONS;
+}
+
+function isToolEnabled(name, settings = state.settings) {
+  return settings?.tools?.entries?.[name]?.enabled !== false;
+}
+
+function collectToolSettingsFromUi() {
+  const tools = getToolDefinitions();
+  const entries = {};
+  const inputs = els.toolsList ? [...els.toolsList.querySelectorAll('input[data-tool-name]')] : [];
+  const byName = new Map(inputs.map((input) => [input.dataset.toolName, input]));
+
+  for (const tool of tools) {
+    const input = byName.get(tool.name);
+    entries[tool.name] = { enabled: input ? input.checked : isToolEnabled(tool.name) };
+  }
+
+  return { entries };
 }
 
 function uniqueLines(value) {
@@ -1844,7 +1986,7 @@ function restoreQueuedToEditor(queued) {
   focusPromptEnd();
 }
 
-function addMessage(role, content) {
+function addMessage(role, content, options = {}) {
   const message = document.createElement('article');
   message.className = `message ${role}`;
 
@@ -1855,6 +1997,15 @@ function addMessage(role, content) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
 
+  let thinking;
+  if (role === 'assistant' && String(options.thinking || '').trim()) {
+    thinking = createThinkingBlock();
+    thinking.content.innerHTML = renderText(options.thinking);
+    thinking.root.hidden = false;
+    message.classList.add('has-thinking');
+    bubble.appendChild(thinking.root);
+  }
+
   const contentEl = document.createElement('div');
   contentEl.className = 'content';
   contentEl.innerHTML = renderText(content);
@@ -1864,7 +2015,7 @@ function addMessage(role, content) {
   message.appendChild(bubble);
   els.messages.appendChild(message);
   scrollToBottom();
-  return { message, bubble, content: contentEl };
+  return { message, bubble, thinking: thinking?.root, thinkingContent: thinking?.content, content: contentEl };
 }
 
 function addSkillMessage(skillBlock) {
@@ -1901,6 +2052,23 @@ function addSkillMessage(skillBlock) {
   return { message, bubble, content: contentEl };
 }
 
+function createThinkingBlock() {
+  const root = document.createElement('div');
+  root.className = 'thinking-block';
+  root.hidden = true;
+
+  const label = document.createElement('div');
+  label.className = 'thinking-label';
+  label.textContent = 'Thinking';
+
+  const content = document.createElement('div');
+  content.className = 'thinking-content';
+
+  root.appendChild(label);
+  root.appendChild(content);
+  return { root, content };
+}
+
 function addAssistantShell() {
   const message = document.createElement('article');
   message.className = 'message assistant';
@@ -1912,12 +2080,15 @@ function addAssistantShell() {
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
 
+  const thinking = createThinkingBlock();
+
   const activity = document.createElement('div');
   activity.className = 'activity';
 
   const content = document.createElement('div');
   content.className = 'content';
 
+  bubble.appendChild(thinking.root);
   bubble.appendChild(activity);
   bubble.appendChild(content);
   message.appendChild(avatar);
@@ -1925,7 +2096,7 @@ function addAssistantShell() {
   els.messages.appendChild(message);
   scrollToBottom();
 
-  return { message, bubble, activity, content, tools: new Map() };
+  return { message, bubble, thinking: thinking.root, thinkingContent: thinking.content, activity, content, tools: new Map() };
 }
 
 function ensureAssistantShell() {
@@ -1933,8 +2104,23 @@ function ensureAssistantShell() {
   return state.currentAssistant;
 }
 
+function setAssistantThinking(shell, thinkingText) {
+  const text = String(thinkingText || '').trim();
+  if (!shell?.thinking || !shell?.thinkingContent || !text) return;
+
+  shell.thinkingContent.innerHTML = renderText(text);
+  shell.thinking.hidden = false;
+  shell.message.classList.add('has-thinking');
+}
+
+function markAssistantHasActivity(shell) {
+  if (shell?.message) shell.message.classList.add('has-activity');
+}
+
 function isAssistantShellEmpty(shell) {
-  return !shell.content.textContent.trim() && shell.activity.childElementCount === 0;
+  return !shell.content.textContent.trim()
+    && !shell.thinkingContent?.textContent?.trim()
+    && shell.activity.childElementCount === 0;
 }
 
 function addAssistantError(error) {
@@ -1991,6 +2177,13 @@ function handleAgentEvent(event) {
     return;
   }
 
+  if (event.type === 'assistant:thinking') {
+    const shell = ensureAssistantShell();
+    setAssistantThinking(shell, event.content || '');
+    scrollToBottom();
+    return;
+  }
+
   if (event.type === 'assistant:content') {
     const shell = ensureAssistantShell();
     shell.content.innerHTML = renderText(event.content || '(no response)');
@@ -2010,6 +2203,7 @@ function handleAgentEvent(event) {
   if (event.type === 'skill:used') {
     const shell = ensureAssistantShell();
     shell.activity.appendChild(createSkillActivityItem(event));
+    markAssistantHasActivity(shell);
     scrollToBottom();
     return;
   }
@@ -2019,6 +2213,7 @@ function handleAgentEvent(event) {
     const item = createToolItem(event);
     shell.tools.set(event.id, item);
     shell.activity.appendChild(item.root);
+    markAssistantHasActivity(shell);
     scrollToBottom();
   }
 
@@ -2029,6 +2224,7 @@ function handleAgentEvent(event) {
       shell.tools.set(event.id, item);
       shell.activity.appendChild(item.root);
     }
+    markAssistantHasActivity(shell);
     const ok = event.result?.ok !== false;
     item.name = event.name || item.name;
     item.args = event.args || item.args || {};
@@ -2051,6 +2247,7 @@ function handleAgentEvent(event) {
       shell.tools.set(event.id, item);
       shell.activity.appendChild(item.root);
     }
+    markAssistantHasActivity(shell);
     markToolCancelled(item, event);
     scrollToBottom();
     return;
@@ -2213,6 +2410,7 @@ async function openSettings(tab = 'model') {
   if (els.compatibilityPresetInput) els.compatibilityPresetInput.value = normalizeCompatibilityPreset(state.settings.compatibilityPreset);
   if (els.maxConcurrencyInput) els.maxConcurrencyInput.value = normalizeMaxConcurrency(state.settings.maxConcurrency);
   if (els.guardrailsModeInput) els.guardrailsModeInput.value = getGuardrailsMode();
+  renderToolsPane();
   els.settingsModal.classList.remove('hidden');
   await setSettingsTab(typeof tab === 'string' ? tab : 'model');
   if (tab === 'model') els.apiBaseUrlInput.focus();
@@ -2223,7 +2421,7 @@ function isSettingsTabActive(tab) {
 }
 
 async function setSettingsTab(tab = 'model', options = {}) {
-  const nextTab = ['model', 'skills', 'appearance', 'logs'].includes(tab) ? tab : 'model';
+  const nextTab = ['model', 'skills', 'tools', 'appearance', 'logs'].includes(tab) ? tab : 'model';
   els.settingsTabs.forEach((button) => {
     const active = button.dataset.settingsTab === nextTab;
     button.classList.toggle('active', active);
@@ -2236,6 +2434,7 @@ async function setSettingsTab(tab = 'model', options = {}) {
   });
 
   if (nextTab === 'skills' && options.loadSkills !== false) await loadSkillsPane();
+  if (nextTab === 'tools') renderToolsPane();
 }
 
 async function openLogs() {
@@ -2282,7 +2481,8 @@ async function saveSettings() {
     maxConcurrency: normalizeMaxConcurrency(els.maxConcurrencyInput?.value, state.settings.maxConcurrency),
     guardrails: {
       mode: normalizeGuardrailsMode(els.guardrailsModeInput?.value)
-    }
+    },
+    tools: collectToolSettingsFromUi()
   };
 
   try {
@@ -2382,6 +2582,7 @@ function parseSkillBlock(text) {
 
 function renderMessagesFromHistory(messages = [], options = {}) {
   const partialAssistantText = String(options.partialAssistantText || '').trim();
+  const partialAssistantThinkingText = String(options.partialAssistantThinkingText || '').trim();
   els.messages.innerHTML = '';
   state.currentAssistant = null;
 
@@ -2404,10 +2605,14 @@ function renderMessagesFromHistory(messages = [], options = {}) {
         displayed += 1;
         lastDisplayRole = 'user';
       }
-    } else if (message?.role === 'assistant' && typeof message.content === 'string' && message.content.trim()) {
-      addMessage('assistant', message.content);
-      displayed += 1;
-      lastDisplayRole = 'assistant';
+    } else if (message?.role === 'assistant') {
+      const content = typeof message.content === 'string' ? message.content : '';
+      const thinking = typeof message.thinking === 'string' ? message.thinking : '';
+      if (content.trim() || thinking.trim()) {
+        addMessage('assistant', content, { thinking });
+        displayed += 1;
+        lastDisplayRole = 'assistant';
+      }
     }
   }
 
@@ -2418,8 +2623,12 @@ function renderMessagesFromHistory(messages = [], options = {}) {
 
   if (state.busy) {
     if (lastDisplayRole !== 'assistant') state.currentAssistant = addAssistantShell();
+    if (partialAssistantThinkingText) {
+      const shell = ensureAssistantShell();
+      setAssistantThinking(shell, partialAssistantThinkingText);
+    }
     if (partialAssistantText) {
-      const shell = state.currentAssistant || addAssistantShell();
+      const shell = ensureAssistantShell();
       shell.content.innerHTML = renderText(partialAssistantText);
     }
   }

@@ -36,7 +36,7 @@
         </button>
         <button id="settingsBtn" class="side-nav-item" type="button">
           <strong>Settings</strong>
-          <span>Model, skills, logs</span>
+          <span>Model, tools, skills, logs</span>
         </button>
       </nav>
 
@@ -149,7 +149,7 @@
       <div class="modal-header">
         <div>
           <h2>Settings</h2>
-          <p>Configure the model, skills, appearance, and logs.</p>
+          <p>Configure the model, tools, skills, appearance, and logs.</p>
         </div>
         <button id="closeSettingsBtn" class="icon-button">×</button>
       </div>
@@ -157,6 +157,7 @@
       <div class="settings-tabs" role="tablist" aria-label="Settings sections">
         <button class="settings-tab active" type="button" role="tab" aria-selected="true" data-settings-tab="model">Model</button>
         <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="skills">Skills</button>
+        <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="tools">Tools</button>
         <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="appearance">Appearance</button>
         <button class="settings-tab" type="button" role="tab" aria-selected="false" data-settings-tab="logs">Logs</button>
       </div>
@@ -164,7 +165,7 @@
       <section class="settings-panel active" data-settings-panel="model" role="tabpanel">
         <label class="field">
           <span>API Base URL</span>
-          <input id="apiBaseUrlInput" type="text" placeholder="https://api.openai.com/v1" />
+          <input id="apiBaseUrlInput" type="text" placeholder="https://yolo-auto.com/v1" />
         </label>
         <label class="field">
           <span>API Key</span>
@@ -174,7 +175,7 @@
         <button id="clearApiKeyBtn" class="button button-ghost full" type="button">Clear saved API key</button>
         <label class="field two-col">
           <span>Model</span>
-          <input id="modelInput" type="text" placeholder="gpt-4.1-mini" />
+          <input id="modelInput" type="text" placeholder="qwen3.6-35b-a3b" />
         </label>
         <label class="field two-col">
           <span>Default thinking level</span>
@@ -233,6 +234,16 @@
           <button id="refreshSkillsBtn" class="button button-ghost" type="button">Refresh</button>
           <button id="saveSkillDirsBtn" class="button button-primary" type="button">Save skill folders</button>
         </div>
+      </section>
+
+      <section class="settings-panel hidden" data-settings-panel="tools" role="tabpanel">
+        <div class="settings-section-head">
+          <h3>Tool availability</h3>
+          <p>Enable or disable the tools exposed to the model. Changes apply after Save.</p>
+        </div>
+        <div id="toolsStatus" class="pane-status"></div>
+        <div id="toolsList" class="tools-manage-list"></div>
+        <small class="field-hint">Disabling tools removes their schemas from the model session. Local !/!! shell shortcuts are separate. The get_web wrapper is only exposed when both web_search and web_fetch are enabled.</small>
       </section>
 
       <section class="settings-panel hidden" data-settings-panel="appearance" role="tabpanel">

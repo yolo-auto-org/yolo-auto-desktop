@@ -2,7 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
-const { loadSettings, saveSettings, normalizeCompatibilityPreset, normalizeGuardrails, normalizeMaxConcurrency } = require('./settings');
+const { loadSettings, saveSettings, normalizeCompatibilityPreset, normalizeGuardrails, normalizeMaxConcurrency, normalizeToolSettings, isKnownToolName, TOOL_DEFINITIONS } = require('./settings');
 const { createLogger } = require('./logger');
 const { ensureHomeBase, getHomeWorkspacePath } = require('./home-base');
 const { THINKING_LEVELS, normalizeThinkingLevel } = require('./thinking-levels');
@@ -23,6 +23,7 @@ const MAX_MODEL_CHARS = 512;
 const MAX_URL_CHARS = 2048;
 const MAX_QUERY_CHARS = 512;
 const MAX_SKILL_NAME_CHARS = 256;
+const MAX_TOOL_NAME_CHARS = 128;
 
 let mainWindow;
 let settings;
@@ -137,6 +138,8 @@ function publicSettings() {
     compatibilityPreset: normalizeCompatibilityPreset(settings.compatibilityPreset),
     maxConcurrency: normalizeMaxConcurrency(settings.maxConcurrency),
     guardrails: normalizeGuardrails(settings.guardrails),
+    tools: normalizeToolSettings(settings.tools),
+    toolDefinitions: TOOL_DEFINITIONS,
     thinkingLevels: THINKING_LEVELS
   };
 }
@@ -152,6 +155,7 @@ function saveAppSettings(patch = {}) {
     compatibilityPreset: normalizeCompatibilityPreset(settings.compatibilityPreset),
     maxConcurrency: normalizeMaxConcurrency(settings.maxConcurrency),
     guardrails: normalizeGuardrails(settings.guardrails),
+    tools: normalizeToolSettings(settings.tools),
     skills: settings.skills || {},
     agents: settings.agents || {},
     ...patch
@@ -233,15 +237,20 @@ function setupIpc() {
       thinkingLevel: normalizeThinkingLevel(safeSettings.thinkingLevel, settings.thinkingLevel),
       compatibilityPreset: normalizeCompatibilityPreset(safeSettings.compatibilityPreset, settings.compatibilityPreset),
       maxConcurrency: normalizeMaxConcurrency(safeSettings.maxConcurrency, settings.maxConcurrency),
-      guardrails: normalizeGuardrails(safeSettings.guardrails, settings.guardrails)
+      guardrails: normalizeGuardrails(safeSettings.guardrails, settings.guardrails),
+      tools: normalizeToolSettings(safeSettings.tools, settings.tools)
     };
 
+    const toolsChanged = toolSettingsKey(patch.tools) !== toolSettingsKey(settings.tools);
     const needsReload = patch.apiBaseUrl !== String(settings.apiBaseUrl || '').trim()
       || patch.model !== String(settings.model || '').trim()
-      || patch.compatibilityPreset !== normalizeCompatibilityPreset(settings.compatibilityPreset);
+      || patch.compatibilityPreset !== normalizeCompatibilityPreset(settings.compatibilityPreset)
+      || toolsChanged;
 
     if (needsReload && sessionManager.hasBusySessions()) {
-      throw new Error('Cancel running sessions before changing model provider settings. Max concurrency can be changed by itself while sessions run.');
+      throw new Error(toolsChanged
+        ? 'Cancel running sessions before changing tool availability.'
+        : 'Cancel running sessions before changing model provider settings. Max concurrency can be changed by itself while sessions run.');
     }
 
     saveAppSettings(patch);
@@ -433,8 +442,33 @@ function validateSettingsInput(value) {
     thinkingLevel: validateString(input.thinkingLevel ?? '', 'settings.thinkingLevel', { max: 32 }),
     compatibilityPreset: validateString(input.compatibilityPreset ?? '', 'settings.compatibilityPreset', { max: 64 }),
     maxConcurrency: validateNumberLike(input.maxConcurrency, 'settings.maxConcurrency', { min: 1, max: 8 }),
-    guardrails
+    guardrails,
+    tools: validateToolsInput(input.tools)
   };
+}
+
+function validateToolsInput(value) {
+  if (value === undefined || value === null) return undefined;
+  const tools = validatePlainObject(value, 'settings.tools');
+  const rawEntries = tools.entries === undefined || tools.entries === null
+    ? {}
+    : validatePlainObject(tools.entries, 'settings.tools.entries');
+  const entries = {};
+
+  for (const [rawName, rawEntry] of Object.entries(rawEntries)) {
+    const name = validateToolNameInput(rawName);
+    if (!isKnownToolName(name)) continue;
+
+    if (typeof rawEntry === 'boolean') {
+      entries[name] = { enabled: rawEntry };
+      continue;
+    }
+
+    const entry = validatePlainObject(rawEntry, `settings.tools.entries.${name}`);
+    entries[name] = { enabled: validateBoolean(entry.enabled ?? true, `settings.tools.entries.${name}.enabled`) };
+  }
+
+  return { entries };
 }
 
 function validateGuardrailsInput(value) {
@@ -466,6 +500,10 @@ function validateChatTextInput(value) {
 
 function validateSkillNameInput(value) {
   return validateString(value, 'skillName', { max: MAX_SKILL_NAME_CHARS, required: true });
+}
+
+function validateToolNameInput(value) {
+  return validateString(value, 'toolName', { max: MAX_TOOL_NAME_CHARS, required: true });
 }
 
 async function listWorkspaceFileSuggestions(root, query) {
@@ -595,6 +633,10 @@ function setExtraSkillDirs(currentSkills = {}, extraDirs = []) {
       extraDirs: unique
     }
   };
+}
+
+function toolSettingsKey(tools = {}) {
+  return JSON.stringify(normalizeToolSettings(tools));
 }
 
 function normalizeSkillSettings(currentSkills = {}) {

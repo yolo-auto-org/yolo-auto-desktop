@@ -33,9 +33,9 @@ Release artifacts are written to `release/`.
 
 Open Settings in the app and enter an OpenAI-compatible endpoint:
 
-- API Base URL: `https://api.openai.com/v1` or your yolo-auto endpoint
+- API Base URL: defaults to `https://yolo-auto.com/v1` (or use another OpenAI-compatible endpoint)
 - API Key (stored at `~/.yolo-auto-desktop/api-keys.json`; never echoed back into the renderer)
-- Model
+- Model: defaults to `qwen3.6-35b-a3b`
 - Default thinking level (`none`, `low`, `medium`, `high`, `xhigh`)
 
 You can also seed settings with environment variables:

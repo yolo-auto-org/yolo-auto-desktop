@@ -834,7 +834,8 @@ button {
   text-align: right;
 }
 
-.content code:not(pre code) {
+.content code:not(pre code),
+.thinking-content code:not(pre code) {
   padding: 0.12rem 0.32rem;
   border: 1px solid var(--soft-border);
   border-radius: 6px;
@@ -849,11 +850,70 @@ button {
   color: var(--muted-2);
 }
 
+.message.assistant.has-thinking .content:empty::before,
+.message.assistant.has-activity .content:empty::before {
+  content: "";
+}
+
+.thinking-block {
+  margin-bottom: 8px;
+  padding: 9px 11px;
+  border: 1px solid rgba(var(--purple-rgb), 0.22);
+  border-left: 3px solid rgba(var(--purple-rgb), 0.62);
+  border-radius: 13px;
+  background: rgba(var(--purple-rgb), 0.075);
+}
+
+.thinking-block[hidden] {
+  display: none;
+}
+
+.thinking-label {
+  margin-bottom: 5px;
+  color: var(--purple);
+  font-family: "SF Mono", "Cascadia Code", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 780;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.thinking-content {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.55;
+}
+
+.thinking-content * {
+  font-style: italic;
+}
+
+.thinking-content p,
+.thinking-content ul,
+.thinking-content ol,
+.thinking-content blockquote,
+.thinking-content pre,
+.thinking-content .table-wrap {
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+.thinking-content p:first-child,
+.thinking-content ul:first-child,
+.thinking-content ol:first-child,
+.thinking-content blockquote:first-child,
+.thinking-content pre:first-child,
+.thinking-content .table-wrap:first-child {
+  margin-top: 0;
+}
+
 .error-text {
   color: var(--red);
 }
 
 .content pre,
+.thinking-content pre,
 .tool-body pre {
   overflow-x: auto;
   margin: 12px 0 0;
@@ -868,7 +928,8 @@ button {
   white-space: pre;
 }
 
-.content pre code {
+.content pre code,
+.thinking-content pre code {
   font: inherit;
 }
 
@@ -1596,13 +1657,15 @@ button {
 
 .all-sessions-list,
 .skills-manage-list,
+.tools-manage-list,
 .running-sessions-list {
   max-height: min(52vh, 520px);
   overflow-y: auto;
   padding-right: 3px;
 }
 
-.skills-manage-list {
+.skills-manage-list,
+.tools-manage-list {
   display: grid;
   gap: 8px;
 }
@@ -1798,7 +1861,8 @@ button {
   padding: 18px;
 }
 
-.skills-manage-list {
+.skills-manage-list,
+.tools-manage-list {
   margin-bottom: 16px;
 }
 
@@ -1815,6 +1879,15 @@ button {
 
 .skill-manage-item.disabled {
   opacity: 0.62;
+}
+
+.tool-group-heading {
+  margin: 10px 2px 2px;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 820;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .skill-manage-copy {

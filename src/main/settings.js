@@ -10,6 +10,24 @@ const DEFAULT_MAX_CONCURRENCY = 2;
 const MIN_MAX_CONCURRENCY = 1;
 const MAX_MAX_CONCURRENCY = 8;
 const API_KEYS_FILENAME = 'api-keys.json';
+const DEFAULT_API_BASE_URL = 'https://yolo-auto.com/v1';
+const DEFAULT_MODEL = 'qwen3.6-35b-a3b';
+const LEGACY_DEFAULT_API_BASE_URL = 'https://api.openai.com/v1';
+const LEGACY_DEFAULT_MODEL = 'gpt-4.1-mini';
+const TOOL_DEFINITIONS = Object.freeze([
+  { name: 'read', label: 'Read files', group: 'Filesystem read', description: 'Read text files and supported images from the workspace.' },
+  { name: 'grep', label: 'Search file text', group: 'Filesystem read', description: 'Search file contents for matching text.' },
+  { name: 'find', label: 'Find files', group: 'Filesystem read', description: 'Find files and folders by path/name.' },
+  { name: 'ls', label: 'List folders', group: 'Filesystem read', description: 'List directory contents.' },
+  { name: 'write', label: 'Write files', group: 'Filesystem write', description: 'Create or overwrite files.' },
+  { name: 'edit', label: 'Edit files', group: 'Filesystem write', description: 'Patch existing files with exact text replacements.' },
+  { name: 'bash', label: 'Shell / exec', group: 'Shell', description: 'Run terminal commands through the AI bash tool.' },
+  { name: 'web_search', label: 'Web search', group: 'Web', description: 'Search the web for titles, URLs, and snippets.' },
+  { name: 'web_fetch', label: 'Web fetch', group: 'Web', description: 'Fetch one URL and return cleaned readable text/markdown.' },
+  { name: 'get_web', label: 'Get web compatibility', group: 'Web', description: 'Compatibility wrapper for web_search/web_fetch. Disabled automatically unless both are enabled.' },
+  { name: 'browser', label: 'Browser automation', group: 'Browser', description: 'Open live pages and interact with visible controls.' }
+]);
+const TOOL_NAMES = new Set(TOOL_DEFINITIONS.map((tool) => tool.name));
 
 function normalizeCompatibilityPreset(value, fallback = 'openai') {
   const raw = String(value || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
@@ -37,13 +55,14 @@ function normalizeMaxConcurrency(value, fallback = DEFAULT_MAX_CONCURRENCY) {
 
 function getDefaultSettings() {
   return {
-    apiBaseUrl: process.env.YOLO_AUTO_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    apiBaseUrl: process.env.YOLO_AUTO_BASE_URL || process.env.OPENAI_BASE_URL || DEFAULT_API_BASE_URL,
     apiKey: process.env.YOLO_AUTO_API_KEY || process.env.OPENAI_API_KEY || '',
-    model: process.env.YOLO_AUTO_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-mini',
+    model: process.env.YOLO_AUTO_MODEL || process.env.OPENAI_MODEL || DEFAULT_MODEL,
     thinkingLevel: normalizeThinkingLevel(process.env.YOLO_AUTO_THINKING_LEVEL || process.env.OPENAI_REASONING_EFFORT || 'none'),
     compatibilityPreset: normalizeCompatibilityPreset(process.env.YOLO_AUTO_COMPATIBILITY_PRESET || process.env.YOLO_AUTO_MODEL_COMPATIBILITY || 'openai'),
     maxConcurrency: normalizeMaxConcurrency(process.env.YOLO_AUTO_MAX_CONCURRENCY, DEFAULT_MAX_CONCURRENCY),
     guardrails: getDefaultGuardrails(),
+    tools: normalizeToolSettings(),
     workspaceRoot: getHomeWorkspacePath(),
     activeSessionId: '',
     skills: {
@@ -72,7 +91,7 @@ function loadSettings() {
     const raw = fs.readFileSync(settingsPath(), 'utf8');
     const saved = JSON.parse(raw);
     const { settings: sanitizedSaved, migratedApiKey } = migrateLegacyApiKey(saved, storedKey);
-    const merged = mergeSettings(defaults, sanitizedSaved);
+    const merged = mergeSettings(defaults, migrateLegacyProviderDefaults(sanitizedSaved, defaults));
     return {
       ...merged,
       apiKey: migratedApiKey.found ? migratedApiKey.apiKey : defaults.apiKey
@@ -115,6 +134,7 @@ function mergeSettings(defaults, saved = {}) {
     compatibilityPreset: normalizeCompatibilityPreset(source.compatibilityPreset, defaults.compatibilityPreset),
     maxConcurrency: normalizeMaxConcurrency(source.maxConcurrency, defaults.maxConcurrency),
     guardrails: normalizeGuardrails(source.guardrails, defaults.guardrails),
+    tools: normalizeToolSettings(source.tools, defaults.tools),
     skills: {
       ...defaults.skills,
       ...(source.skills || {}),
@@ -208,6 +228,43 @@ function migrateLegacyApiKey(saved, storedKey) {
   return { settings, migratedApiKey };
 }
 
+function migrateLegacyProviderDefaults(source, defaults) {
+  if (String(source.apiBaseUrl || '').trim() !== LEGACY_DEFAULT_API_BASE_URL) return source;
+  if (String(source.model || '').trim() !== LEGACY_DEFAULT_MODEL) return source;
+  return {
+    ...source,
+    apiBaseUrl: defaults.apiBaseUrl,
+    model: defaults.model
+  };
+}
+
+function normalizeToolSettings(currentTools = {}, fallbackTools = {}) {
+  const source = currentTools && typeof currentTools === 'object' ? currentTools : {};
+  const fallback = fallbackTools && typeof fallbackTools === 'object' ? fallbackTools : {};
+  const sourceEntries = source.entries && typeof source.entries === 'object' ? source.entries : {};
+  const fallbackEntries = fallback.entries && typeof fallback.entries === 'object' ? fallback.entries : {};
+  const entries = {};
+
+  for (const tool of TOOL_DEFINITIONS) {
+    const fallbackEnabled = readToolEnabled(fallbackEntries[tool.name], true);
+    entries[tool.name] = { enabled: readToolEnabled(sourceEntries[tool.name], fallbackEnabled) };
+  }
+
+  return { entries };
+}
+
+function readToolEnabled(entry, fallback = true) {
+  if (typeof entry === 'boolean') return entry;
+  if (entry && typeof entry === 'object' && Object.prototype.hasOwnProperty.call(entry, 'enabled')) {
+    return entry.enabled !== false;
+  }
+  return fallback !== false;
+}
+
+function isKnownToolName(name) {
+  return TOOL_NAMES.has(String(name || '').trim());
+}
+
 function stripApiKey(settings) {
   const source = settings && typeof settings === 'object' ? settings : {};
   const { apiKey, ...withoutApiKey } = source;
@@ -225,6 +282,9 @@ module.exports = {
   normalizeCompatibilityPreset,
   normalizeMaxConcurrency,
   normalizeGuardrails,
+  normalizeToolSettings,
+  isKnownToolName,
+  TOOL_DEFINITIONS,
   apiKeysPath,
   clearStoredApiKey
 };

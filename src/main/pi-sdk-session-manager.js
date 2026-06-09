@@ -5,8 +5,8 @@ const { shouldAskCommandApproval } = require('./command-guardrails');
 const { normalizeMaxConcurrency } = require('./settings');
 
 const PI_PROVIDER = 'yolo-openai-compatible';
-const DEFAULT_MODEL = 'gpt-4.1-mini';
-const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+const DEFAULT_MODEL = 'qwen3.6-35b-a3b';
+const DEFAULT_BASE_URL = 'https://yolo-auto.com/v1';
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const DEFAULT_MAX_TOKENS = 16_384;
 const TOOL_TEXT_LIMIT = 50_000;
@@ -198,7 +198,8 @@ class PiSdkSessionManager {
       messages: this.getRendererMessages(active),
       queues: this.queueSnapshot(active),
       busy: !!(active?.session?.isStreaming || active?.runInProgress),
-      partialAssistantText: active?.currentAssistantText || ''
+      partialAssistantText: active?.currentAssistantText || '',
+      partialAssistantThinkingText: active?.currentAssistantThinkingText || ''
     };
   }
 
@@ -238,6 +239,7 @@ class PiSdkSessionManager {
       active.initialPromptText = String(text || '').trim();
       active.initialUserSeen = false;
       active.currentAssistantText = '';
+      active.currentAssistantThinkingText = '';
       active.lastAssistantText = '';
       active.seenSkillKeys = new Set();
       active.suppressedUserTexts = new Set();
@@ -245,6 +247,7 @@ class PiSdkSessionManager {
       active.emptyResponseRetried = false;
       active.toolCalls.clear();
       active.cancelledToolCallIds.clear();
+      assertToolSettingsCompatibleWithSession(active);
 
       this.emit({ type: 'status', message: `Thinking (${displayPiThinkingLevel(active.session.thinkingLevel)})…`, sessionId: active.id });
 
@@ -506,6 +509,7 @@ class PiSdkSessionManager {
       sessionFile: session.sessionFile,
       unsubscribe: null,
       currentAssistantText: '',
+      currentAssistantThinkingText: '',
       lastAssistantText: session.getLastAssistantText?.() || '',
       initialPromptText: '',
       initialUserSeen: false,
@@ -586,7 +590,8 @@ class PiSdkSessionManager {
         baseDelayMs: 750,
         provider: {
           maxRetries: 0,
-          maxRetryDelayMs: 10_000
+          maxRetryDelayMs: 10_000,
+          timeoutMs: 120_000
         }
       },
       enableSkillCommands: true
@@ -601,12 +606,14 @@ class PiSdkSessionManager {
       agentsFilesOverride: (base) => this.appendSoulContext(base, cwd),
       appendSystemPromptOverride: (base) => [
         ...base,
-        'You are running inside YOLO Auto Desktop. Use the full Pi coding-agent toolset for software work. Be production-minded: inspect before editing, prefer exact patches, run relevant checks, explain changes concisely, and ask before destructive actions. The app may require approval before extremely dangerous shell commands unless AI Guardrails are set to YOLO mode.'
+        'You are running inside YOLO Auto Desktop. Use the enabled Pi coding-agent tools for software work. Be production-minded: inspect before editing, prefer exact patches, run relevant checks, explain changes concisely, and ask before destructive actions. The app may require approval before extremely dangerous shell commands unless AI Guardrails are set to YOLO mode.'
       ]
     });
     await resourceLoader.reload();
 
-    const customTools = await this.createCustomTools(cwd, settingsManager, runtimeRef);
+    const customTools = (await this.createCustomTools(cwd, settingsManager, runtimeRef))
+      .filter((tool) => isAgentToolEnabled(tool?.name, settings));
+    const toolNames = activeToolNamesForSettings(settings);
     return sdk.createAgentSession({
       cwd,
       agentDir: this.agentDir,
@@ -617,7 +624,7 @@ class PiSdkSessionManager {
       settingsManager,
       resourceLoader,
       sessionManager: piSessionManager,
-      tools: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_fetch', 'web_search', 'get_web', 'browser'],
+      tools: toolNames,
       customTools,
       sessionStartEvent: {
         type: 'session_start',
@@ -786,6 +793,7 @@ class PiSdkSessionManager {
 
     if (event.type === 'message_start' && event.message?.role === 'assistant') {
       active.currentAssistantText = '';
+      active.currentAssistantThinkingText = '';
       return;
     }
 
@@ -794,8 +802,17 @@ class PiSdkSessionManager {
       if (update?.type === 'text_delta') {
         active.currentAssistantText += update.delta || '';
         this.emit({ type: 'assistant:content', content: active.currentAssistantText, sessionId });
+      } else if (update?.type === 'thinking_start') {
+        active.currentAssistantThinkingText = messageThinking(update.partial) || active.currentAssistantThinkingText || '';
+        this.emit({ type: 'status', message: `Thinking (${displayPiThinkingLevel(active.session.thinkingLevel)})…`, sessionId });
+        if (active.currentAssistantThinkingText) this.emit({ type: 'assistant:thinking', content: active.currentAssistantThinkingText, sessionId });
       } else if (update?.type === 'thinking_delta') {
-        this.emit({ type: 'status', message: 'Thinking…', sessionId });
+        active.currentAssistantThinkingText = messageThinking(update.partial) || `${active.currentAssistantThinkingText || ''}${update.delta || ''}`;
+        this.emit({ type: 'assistant:thinking', content: active.currentAssistantThinkingText, sessionId });
+        this.emit({ type: 'status', message: `Thinking (${displayPiThinkingLevel(active.session.thinkingLevel)})…`, sessionId });
+      } else if (update?.type === 'thinking_end') {
+        active.currentAssistantThinkingText = messageThinking(update.partial) || update.content || active.currentAssistantThinkingText || '';
+        if (active.currentAssistantThinkingText) this.emit({ type: 'assistant:thinking', content: active.currentAssistantThinkingText, sessionId });
       } else if (update?.type === 'toolcall_start') {
         this.emit({ type: 'status', message: 'Preparing action…', sessionId });
       }
@@ -804,6 +821,11 @@ class PiSdkSessionManager {
 
     if (event.type === 'message_end') {
       if (event.message?.role === 'assistant') {
+        const thinking = messageThinking(event.message);
+        if (thinking) {
+          active.currentAssistantThinkingText = thinking;
+          this.emit({ type: 'assistant:thinking', content: thinking, sessionId });
+        }
         const content = messageText(event.message);
         if (content) {
           active.lastAssistantText = content;
@@ -1161,6 +1183,7 @@ function makeProviderModel(modelId, compatibilityPreset = 'openai') {
       supportsUsageInStreaming: true,
       supportsStrictMode: true,
       supportsReasoningEffort: true,
+      ...(isQwenModelId(modelId) ? { thinkingFormat: 'qwen' } : {}),
       maxTokensField: 'max_completion_tokens',
       sendSessionAffinityHeaders: true
     }
@@ -1173,6 +1196,27 @@ function normalizeCompatibilityPreset(value, fallback = 'openai') {
   if (raw === 'local' || raw === 'basic' || raw === 'localbasic') return 'local-basic';
   if (raw === 'open-ai' || raw === 'default') return 'openai';
   return MODEL_COMPATIBILITY_PRESETS.has(fallback) ? fallback : 'openai';
+}
+
+function isQwenModelId(modelId) {
+  return /(^|[\/:-])qwen/i.test(String(modelId || ''));
+}
+
+function assertToolSettingsCompatibleWithSession(active) {
+  const activeToolNames = typeof active?.session?.getActiveToolNames === 'function'
+    ? active.session.getActiveToolNames()
+    : [];
+  if (activeToolNames.length > 0 || !sessionHasToolHistory(active?.session)) return;
+  throw new Error('All model tools are disabled, but this chat already contains previous tool calls. Start a new session for no-tools mode, or re-enable at least one tool before continuing this existing chat.');
+}
+
+function sessionHasToolHistory(session) {
+  return (session?.messages || []).some((message) => {
+    if (message?.role === 'toolResult') return true;
+    return message?.role === 'assistant'
+      && Array.isArray(message.content)
+      && message.content.some((part) => part?.type === 'toolCall');
+  });
 }
 
 function isStopCommandText(text) {
@@ -1226,7 +1270,8 @@ function toRendererMessage(message) {
   }
   if (message.role === 'assistant') {
     const content = messageText(message);
-    return content ? { role: 'assistant', content } : null;
+    const thinking = messageThinking(message);
+    return content || thinking ? { role: 'assistant', content, thinking } : null;
   }
   if (message.role === 'bashExecution') {
     return {
@@ -1274,6 +1319,16 @@ function messageText(message) {
     .filter((part) => part && part.type === 'text')
     .map((part) => part.text || '')
     .join('')
+    .trim();
+}
+
+function messageThinking(message) {
+  const content = message?.content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((part) => part && part.type === 'thinking')
+    .map((part) => part.redacted ? '[thinking redacted by provider]' : (part.thinking || ''))
+    .join('\n\n')
     .trim();
 }
 
@@ -2154,6 +2209,26 @@ function decodeHtmlEntities(value) {
     }
     return Object.prototype.hasOwnProperty.call(named, key) ? named[key] : match;
   });
+}
+
+const DEFAULT_AGENT_TOOL_NAMES = Object.freeze(['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_fetch', 'web_search', 'get_web', 'browser']);
+
+function activeToolNamesForSettings(settings = {}) {
+  return DEFAULT_AGENT_TOOL_NAMES.filter((name) => isAgentToolEnabled(name, settings));
+}
+
+function isAgentToolEnabled(name, settings = {}) {
+  const toolName = String(name || '').trim();
+  if (!toolName) return false;
+  if (!isConfiguredToolEnabled(toolName, settings)) return false;
+  if (toolName === 'get_web') {
+    return isConfiguredToolEnabled('web_fetch', settings) && isConfiguredToolEnabled('web_search', settings);
+  }
+  return true;
+}
+
+function isConfiguredToolEnabled(name, settings = {}) {
+  return settings?.tools?.entries?.[name]?.enabled !== false;
 }
 
 function getExtraSkillDirs(settings = {}) {
