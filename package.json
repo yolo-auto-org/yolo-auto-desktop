@@ -8,7 +8,7 @@
     "ensure-electron": "node scripts/ensure-electron.js",
     "icons": "node scripts/generate-icons.js",
     "check:syntax": "node scripts/check-js-syntax.js",
-    "test": "npm run test:tool-calls && npm run test:web-safety && npm run test:electron-browser",
+    "test": "npm run ensure-electron && npm run test:tool-calls && npm run test:web-safety && npm run test:electron-browser",
     "test:tool-calls": "node scripts/tool-call-regression.js",
     "test:web-safety": "node scripts/web-research-sanitizer-regression.js",
     "test:electron-browser": "npm run ensure-electron && node scripts/electron-browser-guard-regression.js",
