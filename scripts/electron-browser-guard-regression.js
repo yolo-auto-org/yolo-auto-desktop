@@ -8,10 +8,11 @@ const path = require('node:path');
 async function main() {
   const electron = require('electron');
   const runner = path.join(__dirname, 'electron-browser-guard-runner.js');
-  const child = spawn(electron, [runner], {
+  const electronArgs = process.platform === 'linux' ? ['--no-sandbox', runner] : [runner];
+  const child = spawn(electron, electronArgs, {
     cwd: path.join(__dirname, '..'),
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ELECTRON_ENABLE_LOGGING: '0' }
+    env: { ...process.env, ELECTRON_ENABLE_LOGGING: '0', ELECTRON_DISABLE_SANDBOX: '1' }
   });
 
   let stdout = '';
