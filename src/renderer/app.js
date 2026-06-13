@@ -35,7 +35,8 @@ const state = {
   filePicker: { open: false, mode: 'file', query: '', results: [], selectedIndex: 0, anchor: null, requestId: 0 },
   sessionBrowser: { query: '', sortKey: 'date', sortDir: 'desc', tab: 'all' },
   sidebarCollapsed: localStorage.getItem('yolo-sidebar-collapsed') === 'true',
-  theme: localStorage.getItem('yolo-theme') || document.documentElement.dataset.theme || 'dark'
+  theme: localStorage.getItem('yolo-theme') || document.documentElement.dataset.theme || 'dark',
+  updates: { type: 'idle', message: 'Updates are idle.', checking: false }
 };
 
 const els = {
@@ -72,6 +73,8 @@ const els = {
   refreshRunningSessionsBtn: document.getElementById('refreshRunningSessionsBtn'),
   skillsPaneBtn: document.getElementById('skillsPaneBtn'),
   logsBtn: document.getElementById('logsBtn'),
+  checkUpdatesBtn: document.getElementById('checkUpdatesBtn'),
+  updatesStatus: document.getElementById('updatesStatus'),
   skillsModal: document.getElementById('skillsModal'),
   closeSkillsBtn: document.getElementById('closeSkillsBtn'),
   refreshSkillsBtn: document.getElementById('refreshSkillsBtn'),
@@ -127,6 +130,16 @@ async function init() {
       setStatus(`Event render error: ${error?.message || String(error)}`);
     }
   });
+
+  if (typeof window.yolo.onUpdateEvent === 'function') {
+    window.yolo.onUpdateEvent((event) => handleUpdateEvent(event));
+  }
+
+  if (typeof window.yolo.getUpdateStatus === 'function') {
+    window.yolo.getUpdateStatus()
+      .then((status) => handleUpdateEvent(status))
+      .catch(() => {});
+  }
 
   try {
     const bootstrap = await window.yolo.bootstrap();
@@ -218,6 +231,7 @@ function bindEvents() {
   if (els.refreshRunningSessionsBtn) els.refreshRunningSessionsBtn.addEventListener('click', refreshConcurrencyState);
   if (els.skillsPaneBtn) els.skillsPaneBtn.addEventListener('click', openSkillsPane);
   if (els.logsBtn) els.logsBtn.addEventListener('click', openLogs);
+  if (els.checkUpdatesBtn) els.checkUpdatesBtn.addEventListener('click', checkForUpdates);
   if (els.closeSkillsBtn) els.closeSkillsBtn.addEventListener('click', closeSkillsPane);
   if (els.refreshSkillsBtn) els.refreshSkillsBtn.addEventListener('click', loadSkillsPane);
   if (els.saveSkillDirsBtn) els.saveSkillDirsBtn.addEventListener('click', saveSkillDirs);
@@ -1734,6 +1748,12 @@ function formatSessionClock(value) {
   return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(date);
 }
 
+function formatDateTime(value) {
+  const date = formatSessionDate(value);
+  const time = formatSessionClock(value);
+  return [date, time].filter(Boolean).join(' ');
+}
+
 function formatSessionTime(value) {
   if (!value) return '';
   const date = new Date(value);
@@ -2435,6 +2455,7 @@ async function setSettingsTab(tab = 'model', options = {}) {
 
   if (nextTab === 'skills' && options.loadSkills !== false) await loadSkillsPane();
   if (nextTab === 'tools') renderToolsPane();
+  if (nextTab === 'logs') renderUpdateStatus();
 }
 
 async function openLogs() {
@@ -2443,6 +2464,49 @@ async function openLogs() {
     setStatus(result?.logPath ? `Opened logs: ${result.logPath}` : 'Opened logs');
   } catch (error) {
     addAssistantError(error);
+  }
+}
+
+async function checkForUpdates() {
+  if (!window.yolo.checkForUpdates) return;
+  if (els.checkUpdatesBtn) els.checkUpdatesBtn.disabled = true;
+  handleUpdateEvent({ type: 'checking', message: 'Checking for updates…', checking: true });
+
+  try {
+    const result = await window.yolo.checkForUpdates();
+    if (result?.status) handleUpdateEvent(result.status);
+    if (result?.error) setStatus(result.error);
+    else if (result?.status?.message) setStatus(result.status.message);
+  } catch (error) {
+    handleUpdateEvent({ type: 'error', message: error.message || 'Failed to check for updates', checking: false });
+    setStatus(error.message || 'Failed to check for updates');
+  } finally {
+    renderUpdateStatus();
+  }
+}
+
+function handleUpdateEvent(event = {}) {
+  state.updates = {
+    ...state.updates,
+    ...event,
+    message: event.message || state.updates.message || 'Updates are idle.',
+    checking: !!event.checking
+  };
+  renderUpdateStatus();
+}
+
+function renderUpdateStatus() {
+  if (els.updatesStatus) {
+    const pieces = [state.updates.message || 'Updates are idle.'];
+    if (state.updates.updatedAt) pieces.push(`Last update check: ${formatDateTime(state.updates.updatedAt)}`);
+    els.updatesStatus.textContent = pieces.join(' ');
+  }
+
+  if (els.checkUpdatesBtn) {
+    els.checkUpdatesBtn.disabled = !!state.updates.checking;
+    els.checkUpdatesBtn.textContent = state.updates.type === 'downloading'
+      ? 'Downloading…'
+      : state.updates.checking ? 'Checking…' : 'Check for updates';
   }
 }
 

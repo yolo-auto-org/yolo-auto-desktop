@@ -12,28 +12,7 @@ const rootDir = path.resolve(__dirname, '..');
 const buildDir = path.join(rootDir, 'build');
 const iconsDir = path.join(buildDir, 'icons');
 const iconsetDir = path.join(buildDir, 'icon.iconset');
-
-const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="112" y1="80" x2="912" y2="944" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#7C3AED"/>
-      <stop offset="0.52" stop-color="#2563EB"/>
-      <stop offset="1" stop-color="#06B6D4"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(336 288) rotate(51) scale(720)">
-      <stop stop-color="#FFFFFF" stop-opacity="0.34"/>
-      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="shadow" x="170" y="248" width="704" height="524" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="28" stdDeviation="32" flood-color="#020617" flood-opacity="0.36"/>
-    </filter>
-  </defs>
-  <rect x="64" y="64" width="896" height="896" rx="220" fill="url(#bg)"/>
-  <rect x="64" y="64" width="896" height="896" rx="220" fill="url(#glow)"/>
-  <path d="M202 733C302 620 362 490 394 302H510C496 414 462 514 408 602C481 575 556 572 630 594C607 513 600 414 609 302H725C711 486 740 624 821 733H688C670 706 655 678 642 649C559 619 475 631 389 684C376 700 363 716 349 733H202Z" fill="white" fill-opacity="0.96" filter="url(#shadow)"/>
-  <circle cx="709" cy="292" r="52" fill="white" fill-opacity="0.96"/>
-</svg>`;
+const sourceIconPath = path.resolve(process.env.YOLO_AUTO_ICON_SOURCE || path.join(rootDir, 'src', 'assets', 'app-icon.png'));
 
 main().catch((error) => {
   console.error(error?.stack || error?.message || String(error));
@@ -41,8 +20,10 @@ main().catch((error) => {
 });
 
 async function main() {
+  await assertReadableSourceIcon();
   await fs.mkdir(iconsDir, { recursive: true });
-  await fs.writeFile(path.join(buildDir, 'icon.svg'), svg, 'utf8');
+  await fs.copyFile(sourceIconPath, path.join(buildDir, 'icon-source.png'));
+  await fs.rm(path.join(buildDir, 'icon.svg'), { force: true });
 
   const sizes = [16, 24, 32, 48, 64, 128, 256, 512, 1024];
   const pngPaths = [];
@@ -56,12 +37,24 @@ async function main() {
   await writeWindowsIco(pngPaths.filter((filePath) => /_(16|24|32|48|64|128|256)x\1\.png$/.test(filePath)));
   await writeMacIcns();
 
-  console.log('Generated build icons.');
+  console.log(`Generated build icons from ${path.relative(rootDir, sourceIconPath) || sourceIconPath}.`);
+}
+
+async function assertReadableSourceIcon() {
+  try {
+    const metadata = await sharp(sourceIconPath).metadata();
+    if (!metadata.width || !metadata.height) throw new Error('image dimensions could not be detected');
+  } catch (error) {
+    throw new Error(`Could not read app icon source at ${sourceIconPath}: ${error?.message || String(error)}`);
+  }
 }
 
 async function renderPng(size, filePath) {
-  await sharp(Buffer.from(svg))
-    .resize(size, size, { fit: 'contain' })
+  await sharp(sourceIconPath)
+    .resize(size, size, {
+      fit: 'contain',
+      background: { r: 0, g: 0, b: 0, alpha: 0 }
+    })
     .png()
     .toFile(filePath);
 }

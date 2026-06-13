@@ -88,10 +88,11 @@ module.exports = {
       provider: 'github',
       owner,
       repo,
-      releaseType: 'draft'
+      private: false,
+      releaseType: enabled('GITHUB_RELEASE_DRAFT') ? 'draft' : 'release'
     }
   ],
-  artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
+  artifactName: 'YOLO-Auto-Desktop-${version}-${os}-${arch}.${ext}',
   mac: {
     category: 'public.app-category.productivity',
     target: [
@@ -110,7 +111,7 @@ module.exports = {
   },
   dmg: {
     sign: false,
-    artifactName: '${productName}-${version}-${arch}.${ext}'
+    artifactName: 'YOLO-Auto-Desktop-${version}-${arch}.${ext}'
   },
   win: {
     target: [
@@ -130,7 +131,9 @@ module.exports = {
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     shortcutName: productName,
-    artifactName: '${productName}-Setup-${version}-${arch}.${ext}'
+    installerIcon: 'build/icon.ico',
+    uninstallerIcon: 'build/icon.ico',
+    artifactName: 'YOLO-Auto-Desktop-Setup-${version}-${arch}.${ext}'
   },
   linux: {
     target: [

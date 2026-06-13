@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const fssync = require('node:fs');
 const path = require('node:path');
+const { getAppIcon } = require('./app-icon');
 const { shouldAskCommandApproval } = require('./command-guardrails');
 const { normalizeMaxConcurrency } = require('./settings');
 
@@ -1481,6 +1482,7 @@ async function browserOpen(manager, args, signal) {
       width: 1280,
       height: 900,
       show: args.visible !== false,
+      icon: getAppIcon(),
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,

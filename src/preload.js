@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('yolo', {
   setWorkspace: (workspaceRoot) => ipcRenderer.invoke('workspace:set', workspaceRoot),
   revealWorkspace: () => ipcRenderer.invoke('workspace:reveal'),
   openLogs: () => ipcRenderer.invoke('logs:open'),
+  getUpdateStatus: () => ipcRenderer.invoke('updates:status'),
+  checkForUpdates: () => ipcRenderer.invoke('updates:check'),
   fileSuggestions: (sessionId, query) => ipcRenderer.invoke('workspace:file-suggestions', sessionId, query),
   skillSuggestions: (sessionId, query) => ipcRenderer.invoke('skills:suggestions', sessionId, query),
   listSkills: (sessionId) => ipcRenderer.invoke('skills:list', sessionId),
@@ -29,5 +31,10 @@ contextBridge.exposeInMainWorld('yolo', {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on('agent:event', listener);
     return () => ipcRenderer.removeListener('agent:event', listener);
+  },
+  onUpdateEvent: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('update:event', listener);
+    return () => ipcRenderer.removeListener('update:event', listener);
   }
 });

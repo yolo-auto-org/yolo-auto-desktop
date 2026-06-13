@@ -2,6 +2,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { APP_ID, getAppIcon } = require('./app-icon');
+const { setupAutoUpdates, checkForUpdates, getUpdateStatus } = require('./auto-updater');
 const { loadSettings, saveSettings, normalizeCompatibilityPreset, normalizeGuardrails, normalizeMaxConcurrency, normalizeToolSettings, isKnownToolName, TOOL_DEFINITIONS } = require('./settings');
 const { createLogger } = require('./logger');
 const { ensureHomeBase, getHomeWorkspacePath } = require('./home-base');
@@ -25,6 +27,8 @@ const MAX_QUERY_CHARS = 512;
 const MAX_SKILL_NAME_CHARS = 256;
 const MAX_TOOL_NAME_CHARS = 128;
 
+if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
+
 let mainWindow;
 let settings;
 let homeBaseRoot = '';
@@ -41,6 +45,7 @@ function createWindow() {
     minHeight: 620,
     backgroundColor: '#08080d',
     title: 'yolo-auto desktop',
+    icon: getAppIcon(),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,
@@ -85,12 +90,21 @@ function openExternalUrl(rawUrl) {
 }
 
 function emitAgentEvent(payload) {
+  sendRendererEvent('agent:event', payload);
+}
+
+function emitUpdateEvent(payload) {
+  sendRendererEvent('update:event', payload);
+}
+
+function sendRendererEvent(channel, payload) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
   try {
-    mainWindow.webContents.send('agent:event', toIpcSafePayload(payload));
+    mainWindow.webContents.send(channel, toIpcSafePayload(payload));
   } catch (error) {
-    logger('error', 'agent:event:send-failed', {
+    logger('error', 'renderer:event:send-failed', {
+      channel,
       type: payload?.type || '',
       sessionId: payload?.sessionId || '',
       error: error?.message || String(error)
@@ -355,6 +369,9 @@ function setupIpc() {
     shell.showItemInFolder(logPath);
     return { logPath };
   });
+
+  ipcMain.handle('updates:status', async () => getUpdateStatus());
+  ipcMain.handle('updates:check', async () => checkForUpdates('manual'));
 
   ipcMain.handle('workspace:file-suggestions', async (_event, sessionId, query) => {
     const id = await resolveSessionId(sessionId);
@@ -681,6 +698,7 @@ app.whenReady().then(async () => {
 
   setupIpc();
   createWindow();
+  setupAutoUpdates({ getMainWindow: () => mainWindow, emit: emitUpdateEvent, log: logger });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

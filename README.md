@@ -8,7 +8,7 @@ The runtime is now built on the Pi coding-agent SDK, so coding workflows get Pi'
 
 ## Install
 
-Public desktop installers are built from GitHub Actions and attached to GitHub Releases as draft artifacts first. See `docs/release.md` for the launch checklist. Unsigned/free builds are supported; Windows/macOS will show OS trust warnings until you add paid code signing/notarization.
+Public desktop installers are built by GitHub Actions and attached to GitHub Releases. Published releases also power in-app auto-update checks through `electron-updater`. See `docs/release.md` for the deploy checklist. Unsigned/free builds are supported; Windows/macOS will show OS trust warnings until you add paid code signing/notarization.
 
 For local development:
 
@@ -29,7 +29,7 @@ npm run dist:mac      # macOS dmg/zip, on macOS with signing/notarization for pu
 npm run dist:linux    # AppImage/deb/rpm, on Linux
 ```
 
-Release artifacts are written to `release/`.
+Release artifacts are written to `release/`. Packaged builds check GitHub Releases for updates on startup and periodically after that.
 
 Open Settings in the app and enter an OpenAI-compatible endpoint:
 
