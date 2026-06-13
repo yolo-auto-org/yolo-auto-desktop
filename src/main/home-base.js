@@ -87,10 +87,40 @@ function seedStarterSkills(log) {
 
     const source = path.join(STARTER_SKILLS_DIR, entry.name);
     const destination = path.join(HOME_SKILLS_DIR, entry.name);
-    if (fs.existsSync(destination)) continue;
+    if (isStarterSkillSeeded(destination)) continue;
 
-    fs.cpSync(source, destination, { recursive: true, errorOnExist: true, force: false });
-    log('info', 'skills:seed', { name: entry.name, destination });
+    const destinationExisted = fs.existsSync(destination);
+    try {
+      copyDirectoryRecursive(source, destination);
+      log('info', 'skills:seed', { name: entry.name, destination });
+    } catch (error) {
+      if (!destinationExisted) fs.rmSync(destination, { recursive: true, force: true });
+      log('warn', 'skills:seed-failed', {
+        name: entry.name,
+        source,
+        destination,
+        error: error?.message || String(error)
+      });
+    }
+  }
+}
+
+function isStarterSkillSeeded(skillDir) {
+  return fs.existsSync(path.join(skillDir, 'SKILL.md'));
+}
+
+function copyDirectoryRecursive(source, destination) {
+  fs.mkdirSync(destination, { recursive: true });
+
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const sourcePath = path.join(source, entry.name);
+    const destinationPath = path.join(destination, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirectoryRecursive(sourcePath, destinationPath);
+    } else if (entry.isFile() && !fs.existsSync(destinationPath)) {
+      fs.writeFileSync(destinationPath, fs.readFileSync(sourcePath));
+    }
   }
 }
 
