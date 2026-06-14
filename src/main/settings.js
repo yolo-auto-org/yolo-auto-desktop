@@ -58,7 +58,7 @@ function getDefaultSettings() {
     apiBaseUrl: process.env.YOLO_AUTO_BASE_URL || process.env.OPENAI_BASE_URL || DEFAULT_API_BASE_URL,
     apiKey: process.env.YOLO_AUTO_API_KEY || process.env.OPENAI_API_KEY || '',
     model: process.env.YOLO_AUTO_MODEL || process.env.OPENAI_MODEL || DEFAULT_MODEL,
-    thinkingLevel: normalizeThinkingLevel(process.env.YOLO_AUTO_THINKING_LEVEL || process.env.OPENAI_REASONING_EFFORT || 'none'),
+    thinkingLevel: normalizeThinkingLevel(process.env.YOLO_AUTO_THINKING_LEVEL || process.env.OPENAI_REASONING_EFFORT || 'high', 'high'),
     compatibilityPreset: normalizeCompatibilityPreset(process.env.YOLO_AUTO_COMPATIBILITY_PRESET || process.env.YOLO_AUTO_MODEL_COMPATIBILITY || 'openai'),
     maxConcurrency: normalizeMaxConcurrency(process.env.YOLO_AUTO_MAX_CONCURRENCY, DEFAULT_MAX_CONCURRENCY),
     guardrails: getDefaultGuardrails(),

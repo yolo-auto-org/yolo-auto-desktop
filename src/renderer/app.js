@@ -2606,7 +2606,7 @@ async function clearApiKey() {
 function updateApiKeyUi() {
   const configured = !!state.settings.apiKeyConfigured;
   if (els.apiKeyInput) {
-    els.apiKeyInput.placeholder = configured ? 'Configured — leave blank to keep current key' : 'sk-…';
+    els.apiKeyInput.placeholder = configured ? 'Configured — leave blank to keep current key' : 'yolo_…';
   }
   if (els.apiKeyStatus) {
     els.apiKeyStatus.textContent = configured
