@@ -21,20 +21,61 @@ Artifacts are written to `release/`.
 
 ## GitHub deploy flow
 
-The `.github/workflows/release.yml` workflow is the deployment path for the public repo.
+The `.github/workflows/release.yml` workflow is the deployment path for the public repo. This is the quick checklist to follow when asked to cut a release.
 
-1. Update `package.json` version.
-2. Commit everything.
-3. Tag exactly the package version:
+### Agent-friendly command order
 
-   ```bash
-   git tag v0.1.0
-   git push origin main --tags
-   ```
+> Replace `0.1.2` / `v0.1.2` with the target version. Push the tag only after all release changes are committed; tag push starts the release workflow.
 
-4. GitHub Actions builds Windows/macOS/Linux artifacts.
-5. The workflow publishes a GitHub Release and attaches installers plus updater metadata (`latest*.yml` and `.blockmap` files).
-6. Published releases are visible to the in-app auto-updater.
+```bash
+# 1. Inspect state and confirm the target version/tag are free.
+git status -sb
+git fetch origin main --tags
+git ls-remote --exit-code --tags origin refs/tags/v0.1.2 || true
+
+# 2. Bump package.json and package-lock.json.
+npm version 0.1.2 --no-git-tag-version
+
+# 3. Run the local gate.
+npm run check
+
+# 4. Commit the exact release contents.
+git status --short
+git add package.json package-lock.json <changed-files>
+git commit -m "Release v0.1.2"
+
+# 5. Create an annotated tag exactly matching package.json.
+git tag -a v0.1.2 -m "YOLO Auto Desktop v0.1.2"
+
+# 6. Push main first, then the tag.
+git push origin main
+git push origin v0.1.2
+
+# 7. Watch the GitHub Actions release workflow.
+gh run list --workflow release.yml --limit 5
+gh run watch <run-id> --exit-status
+
+# 8. Verify the published GitHub Release.
+gh release view v0.1.2 --json tagName,targetCommitish,isDraft,isPrerelease,publishedAt,url,assets \
+  --jq '{tagName,targetCommitish,isDraft,isPrerelease,publishedAt,url,assetCount:(.assets|length)}'
+```
+
+Expected workflow result: GitHub Actions builds Windows/macOS/Linux artifacts, publishes a GitHub Release, and attaches installers plus updater metadata (`latest*.yml` and `.blockmap` files). Published releases are visible to the in-app auto-updater.
+
+### If a tag-triggered release started too early
+
+If the release workflow is already running but the GitHub Release has **not** been created yet, cancel the run, commit the missing changes, move the tag, and force-push only that tag:
+
+```bash
+gh run cancel <run-id>
+# make changes, run npm run check, commit them
+git tag -fa v0.1.2 -m "YOLO Auto Desktop v0.1.2"
+git push origin main
+git push --force origin v0.1.2
+gh run watch <new-run-id> --exit-status
+```
+
+If a public GitHub Release already exists, do not rewrite it; bump to a new patch version instead.
 
 You can also run **Actions → Release → Run workflow** manually. Manual runs create/reuse `v<package.json version>`; set `draft=true` if you want a private smoke-test draft first. Draft releases are useful for testing, but auto-update clients cannot see them until they are published.
 
