@@ -1772,6 +1772,7 @@ button {
 .sessions-col-date { width: 132px; }
 .sessions-col-time { width: 92px; }
 .sessions-col-preview { width: auto; }
+.sessions-col-actions { width: 46px; }
 
 .sessions-sort-button {
   display: flex;
@@ -1832,6 +1833,46 @@ button {
   min-width: 0;
 }
 
+.sessions-actions-cell {
+  width: 46px;
+  padding: 6px 8px 6px 0 !important;
+  text-align: right;
+}
+
+.session-delete-button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  color: var(--muted-2);
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.78;
+  transition: color 0.14s ease, background 0.14s ease, opacity 0.14s ease, transform 0.14s ease;
+}
+
+.session-delete-button:hover,
+.session-delete-button:focus {
+  color: var(--red);
+  background: rgba(var(--red-rgb), 0.12);
+  opacity: 1;
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.session-delete-button:disabled,
+.session-delete-button:disabled:hover,
+.session-delete-button:disabled:focus {
+  color: var(--muted-2);
+  background: transparent;
+  cursor: not-allowed;
+  opacity: 0.34;
+  transform: none;
+}
+
 .session-preview-title,
 .session-preview-meta {
   overflow: hidden;
@@ -1855,6 +1896,14 @@ button {
   color: var(--muted-2);
   font-family: "SF Mono", "Cascadia Code", ui-monospace, monospace;
   font-size: 11px;
+}
+
+.session-table-row:hover .session-preview-meta,
+.session-table-row:focus .session-preview-meta,
+.session-table-row:focus-within .session-preview-meta {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .table-empty {

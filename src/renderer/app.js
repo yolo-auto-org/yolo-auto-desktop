@@ -1544,6 +1544,48 @@ async function terminateSession(sessionId, pendingText = '') {
   }
 }
 
+async function deleteSession(sessionOrId, triggerButton) {
+  const session = typeof sessionOrId === 'string'
+    ? state.sessions.find((candidate) => candidate.id === sessionOrId) || { id: sessionOrId }
+    : sessionOrId;
+  const sessionId = session?.id;
+  if (!sessionId) return;
+
+  if (getSessionStatus(session) === 'running') {
+    setStatus('Cancel the running session before deleting it');
+    return;
+  }
+
+  const title = session.title || 'New chat';
+  const confirmed = window.confirm(`Delete session "${title}"?\n\nThis removes the saved chat and cannot be undone.`);
+  if (!confirmed) return;
+
+  const previousActiveId = state.activeSessionId;
+  try {
+    if (triggerButton) triggerButton.disabled = true;
+    setStatus('Deleting session…');
+    const payload = await window.yolo.deleteSession(sessionId);
+    if (Object.prototype.hasOwnProperty.call(state.sessionReviews || {}, sessionId)) {
+      delete state.sessionReviews[sessionId];
+      saveSessionReviews();
+    }
+    applySessionPayload(payload);
+    if (previousActiveId === sessionId || payload.activeSessionId !== previousActiveId) {
+      state.currentAssistant = null;
+      renderMessagesFromHistory(payload.active?.messages || [], {
+        partialAssistantText: payload.active?.partialAssistantText || '',
+        partialAssistantThinkingText: payload.active?.partialAssistantThinkingText || ''
+      });
+    }
+    renderChrome();
+    setStatus('Session deleted');
+  } catch (error) {
+    addAssistantError(error);
+  } finally {
+    if (triggerButton?.isConnected) triggerButton.disabled = false;
+  }
+}
+
 function getFilteredSortedSessions() {
   const query = normalizeSessionSearch(state.sessionBrowser.query);
   const filtered = query
@@ -1561,6 +1603,7 @@ function createSessionsTableHead() {
   row.appendChild(createSessionSortHeader('Date', 'date'));
   row.appendChild(createSessionSortHeader('Time', 'time'));
   row.appendChild(createSessionSortHeader('Preview', 'preview'));
+  row.appendChild(createSessionActionsHeader());
   head.appendChild(row);
   return head;
 }
@@ -1586,6 +1629,14 @@ function createSessionSortHeader(label, key) {
   return th;
 }
 
+function createSessionActionsHeader() {
+  const th = document.createElement('th');
+  th.scope = 'col';
+  th.className = 'sessions-col-actions';
+  th.setAttribute('aria-label', 'Session actions');
+  return th;
+}
+
 function createSessionTableRow(session) {
   const row = document.createElement('tr');
   row.className = `session-table-row${session.id === state.activeSessionId ? ' active' : ''}${getSessionStatus(session) === 'running' ? ' running' : ''}`;
@@ -1607,19 +1658,43 @@ function createSessionTableRow(session) {
 
   const preview = document.createElement('td');
   preview.className = 'sessions-preview-cell';
+  const previewHoverText = [session.title || 'New chat', getSessionFullPathText(session)].filter(Boolean).join('\n');
+  if (previewHoverText) preview.title = previewHoverText;
   const title = document.createElement('div');
   title.className = 'session-preview-title';
   title.textContent = session.title || 'New chat';
+  if (previewHoverText) title.title = previewHoverText;
   const meta = document.createElement('div');
   meta.className = 'session-preview-meta';
   meta.textContent = [session.workspaceRoot, session.sessionFile].filter(Boolean).join(' · ');
-  if (meta.textContent) meta.title = meta.textContent;
+  if (previewHoverText) meta.title = previewHoverText;
   preview.appendChild(title);
   if (meta.textContent) preview.appendChild(meta);
+
+  const actions = document.createElement('td');
+  actions.className = 'sessions-actions-cell';
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'session-delete-button';
+  deleteBtn.textContent = '🗑';
+  deleteBtn.setAttribute('aria-label', `Delete session ${session.title || 'New chat'}`);
+  if (getSessionStatus(session) === 'running') {
+    deleteBtn.disabled = true;
+    deleteBtn.title = 'Cancel the running session before deleting it';
+  } else {
+    deleteBtn.title = `Delete session: ${session.title || 'New chat'}`;
+  }
+  deleteBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    deleteSession(session, deleteBtn);
+  });
+  deleteBtn.addEventListener('keydown', (event) => event.stopPropagation());
+  actions.appendChild(deleteBtn);
 
   row.appendChild(date);
   row.appendChild(time);
   row.appendChild(preview);
+  row.appendChild(actions);
 
   const select = async () => {
     markSessionReviewed(session);
@@ -1670,6 +1745,13 @@ function normalizeSessionSearch(value) {
 
 function getSessionPreviewText(session) {
   return String(session?.title || 'New chat');
+}
+
+function getSessionFullPathText(session) {
+  return [
+    session?.workspaceRoot ? `Workspace: ${session.workspaceRoot}` : '',
+    session?.sessionFile ? `Session file: ${session.sessionFile}` : ''
+  ].filter(Boolean).join('\n');
 }
 
 function getSessionTimestamp(session) {
