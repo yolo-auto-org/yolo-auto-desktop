@@ -14,6 +14,9 @@ const FALLBACK_TOOL_DEFINITIONS = [
 ];
 const RECENT_SESSION_LIMIT = 5;
 const BOTTOM_SCROLL_THRESHOLD = 32;
+const AUTO_SCROLL_SETTLE_FRAMES = 4;
+const AUTO_SCROLL_INTERACTION_PAUSE_MS = 900;
+const AUTO_SCROLL_PROGRAMMATIC_RESET_MS = 80;
 const SESSION_REVIEW_STORAGE_KEY = 'yolo-session-reviews';
 const SESSION_REVIEW_LIMIT = 500;
 
@@ -29,6 +32,16 @@ const state = {
   busy: false,
   currentAssistant: null,
   stickToBottom: true,
+  autoScroll: {
+    frameId: 0,
+    framesRemaining: 0,
+    force: false,
+    pendingSticky: false,
+    programmatic: false,
+    programmaticTimer: 0,
+    userInteracting: false,
+    interactionTimer: 0
+  },
   queues: { steering: [], followUp: [] },
   concurrency: { maxConcurrency: 2, runningCount: 0, runningSessions: [], canStart: true, pendingText: '' },
   skills: { skills: [], diagnostics: [], extraDirs: [], loading: false, error: '' },
@@ -166,12 +179,19 @@ function bindEvents() {
   els.followUpBtn.addEventListener('click', () => queuePrompt('followUp'));
   els.cancelBtn.addEventListener('click', cancelRun);
   els.messages.addEventListener('scroll', handleMessagesScroll, { passive: true });
+  els.messages.addEventListener('wheel', markMessagesUserInteraction, { passive: true });
+  els.messages.addEventListener('touchmove', markMessagesUserInteraction, { passive: true });
+  els.messages.addEventListener('pointerdown', markMessagesUserInteraction, { passive: true });
   if (els.returnToBottomBtn) els.returnToBottomBtn.addEventListener('click', () => scrollToBottom({ force: true }));
   if (els.composerWrap && 'ResizeObserver' in window) {
-    new ResizeObserver(updateReturnToBottomButton).observe(els.composerWrap);
+    new ResizeObserver(() => {
+      updateReturnToBottomButton();
+      scrollToBottom();
+    }).observe(els.composerWrap);
   }
   window.addEventListener('resize', () => {
     updateReturnToBottomButton();
+    scrollToBottom();
     renderWorkspaceSelect();
   });
   els.promptInput.addEventListener('input', () => {
@@ -2726,13 +2746,40 @@ function removeWelcome() {
 }
 
 function handleMessagesScroll() {
-  state.stickToBottom = isNearBottom();
+  const nearBottom = isNearBottom();
+  if (nearBottom || !state.autoScroll.programmatic) state.stickToBottom = nearBottom;
   updateReturnToBottomButton();
+}
+
+function markMessagesUserInteraction() {
+  if (!state.autoScroll) return;
+  state.autoScroll.userInteracting = true;
+  state.autoScroll.pendingSticky = false;
+  state.autoScroll.framesRemaining = 0;
+  state.autoScroll.force = false;
+  state.autoScroll.programmatic = false;
+  if (!isNearBottom()) state.stickToBottom = false;
+  if (state.autoScroll.frameId) cancelAnimationFrame(state.autoScroll.frameId);
+  state.autoScroll.frameId = 0;
+  if (state.autoScroll.programmaticTimer) window.clearTimeout(state.autoScroll.programmaticTimer);
+  state.autoScroll.programmaticTimer = 0;
+  if (state.autoScroll.interactionTimer) window.clearTimeout(state.autoScroll.interactionTimer);
+  state.autoScroll.interactionTimer = window.setTimeout(() => {
+    state.autoScroll.userInteracting = false;
+    state.autoScroll.interactionTimer = 0;
+  }, AUTO_SCROLL_INTERACTION_PAUSE_MS);
+}
+
+function clearMessagesUserInteraction() {
+  if (!state.autoScroll) return;
+  state.autoScroll.userInteracting = false;
+  if (state.autoScroll.interactionTimer) window.clearTimeout(state.autoScroll.interactionTimer);
+  state.autoScroll.interactionTimer = 0;
 }
 
 function isNearBottom() {
   if (!els.messages) return true;
-  const distance = els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight;
+  const distance = Math.max(0, els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight);
   return distance <= BOTTOM_SCROLL_THRESHOLD;
 }
 
@@ -2747,16 +2794,60 @@ function updateReturnToBottomButton() {
 }
 
 function scrollToBottom(options = {}) {
+  if (!els.messages) return;
   const force = options === true || options.force === true;
-  if (force) state.stickToBottom = true;
+  const shouldStick = force || state.stickToBottom || state.autoScroll.pendingSticky || isNearBottom();
 
-  requestAnimationFrame(() => {
-    if (force || state.stickToBottom || isNearBottom()) {
-      els.messages.scrollTop = els.messages.scrollHeight;
-      state.stickToBottom = true;
-    }
+  if (force) {
+    state.stickToBottom = true;
+    clearMessagesUserInteraction();
+  }
+
+  if (!shouldStick) {
     updateReturnToBottomButton();
-  });
+    return;
+  }
+
+  state.autoScroll.pendingSticky = true;
+  state.autoScroll.force = state.autoScroll.force || force;
+  state.autoScroll.framesRemaining = Math.max(
+    state.autoScroll.framesRemaining,
+    force ? 1 : AUTO_SCROLL_SETTLE_FRAMES
+  );
+  scheduleAutoScrollFrame();
+}
+
+function scheduleAutoScrollFrame() {
+  if (state.autoScroll.frameId) return;
+  state.autoScroll.frameId = requestAnimationFrame(runAutoScrollFrame);
+}
+
+function runAutoScrollFrame() {
+  state.autoScroll.frameId = 0;
+  const force = state.autoScroll.force;
+  state.autoScroll.force = false;
+
+  const shouldScroll = state.autoScroll.pendingSticky && (force || !state.autoScroll.userInteracting);
+  if (shouldScroll && els.messages) {
+    state.autoScroll.programmatic = true;
+    els.messages.scrollTop = els.messages.scrollHeight;
+    state.stickToBottom = true;
+    if (state.autoScroll.programmaticTimer) window.clearTimeout(state.autoScroll.programmaticTimer);
+    state.autoScroll.programmaticTimer = window.setTimeout(() => {
+      state.autoScroll.programmatic = false;
+      state.autoScroll.programmaticTimer = 0;
+    }, AUTO_SCROLL_PROGRAMMATIC_RESET_MS);
+  }
+
+  state.autoScroll.framesRemaining = Math.max(0, state.autoScroll.framesRemaining - 1);
+  if (shouldScroll && state.autoScroll.framesRemaining > 0) {
+    scheduleAutoScrollFrame();
+  } else {
+    state.autoScroll.pendingSticky = false;
+    state.autoScroll.framesRemaining = 0;
+  }
+
+  updateReturnToBottomButton();
 }
 
 function renderText(text) {
@@ -2980,7 +3071,7 @@ function renderInlineMarkdown(value) {
   let html = escapeHtml(value);
 
   html = html.replace(/`([^`]+)`/g, (_match, code) => {
-    const token = `@@INLINE_CODE_${inlineCode.length}@@`;
+    const token = `<!--INLINECODE${inlineCode.length}-->`;
     inlineCode.push(`<code>${code}</code>`);
     return token;
   });
@@ -2997,7 +3088,7 @@ function renderInlineMarkdown(value) {
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
     .replace(/(^|[^_])_([^_\n]+)_/g, '$1<em>$2</em>');
 
-  return html.replace(/@@INLINE_CODE_(\d+)@@/g, (_match, index) => inlineCode[Number(index)] || '');
+  return html.replace(/<!--INLINECODE(\d+)-->/g, (_match, index) => inlineCode[Number(index)] || '');
 }
 
 function sanitizeMarkdownUrl(value) {

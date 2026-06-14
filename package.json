@@ -1,6 +1,6 @@
 {
   "name": "yolo-auto-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local desktop AI assistant for everyday computer tasks and coding work.",
   "main": "src/main/index.js",
   "scripts": {
