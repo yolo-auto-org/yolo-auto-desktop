@@ -9,6 +9,12 @@ const COMPATIBILITY_PRESETS = new Set(['openai', 'local-basic']);
 const DEFAULT_MAX_CONCURRENCY = 2;
 const MIN_MAX_CONCURRENCY = 1;
 const MAX_MAX_CONCURRENCY = 8;
+const DEFAULT_CONTEXT_WINDOW = 131_072;
+const DEFAULT_COMPACTION_ENABLED = true;
+const DEFAULT_COMPACTION_RESERVE_TOKENS = Math.round(DEFAULT_CONTEXT_WINDOW * 0.25);
+const DEFAULT_COMPACTION_KEEP_RECENT_TOKENS = 20_000;
+const MIN_COMPACTION_TOKENS = 1_000;
+const MAX_COMPACTION_TOKENS = 1_000_000;
 const API_KEYS_FILENAME = 'api-keys.json';
 const DEFAULT_API_BASE_URL = 'https://yolo-auto.com/v1';
 const DEFAULT_MODEL = 'qwen3.6-35b-a3b';
@@ -53,6 +59,40 @@ function normalizeMaxConcurrency(value, fallback = DEFAULT_MAX_CONCURRENCY) {
   return Math.min(MAX_MAX_CONCURRENCY, Math.max(MIN_MAX_CONCURRENCY, number));
 }
 
+function normalizeCompactionSettings(current = {}, fallback = {}) {
+  const source = current && typeof current === 'object' ? current : {};
+  const fallbackSource = fallback && typeof fallback === 'object' ? fallback : {};
+
+  return {
+    enabled: normalizeBooleanSetting(source.enabled, normalizeBooleanSetting(fallbackSource.enabled, DEFAULT_COMPACTION_ENABLED)),
+    reserveTokens: normalizeTokenSetting(
+      source.reserveTokens,
+      normalizeTokenSetting(fallbackSource.reserveTokens, DEFAULT_COMPACTION_RESERVE_TOKENS)
+    ),
+    keepRecentTokens: normalizeTokenSetting(
+      source.keepRecentTokens,
+      normalizeTokenSetting(fallbackSource.keepRecentTokens, DEFAULT_COMPACTION_KEEP_RECENT_TOKENS)
+    )
+  };
+}
+
+function normalizeBooleanSetting(value, fallback = true) {
+  if (typeof value === 'boolean') return value;
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return fallback !== false;
+  if (['1', 'true', 'yes', 'on', 'enabled', 'enable'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off', 'disabled', 'disable'].includes(raw)) return false;
+  return fallback !== false;
+}
+
+function normalizeTokenSetting(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  const fallbackNumber = Number.isFinite(Number(fallback)) ? Number(fallback) : DEFAULT_COMPACTION_RESERVE_TOKENS;
+  const normalizedFallback = Math.min(MAX_COMPACTION_TOKENS, Math.max(MIN_COMPACTION_TOKENS, Math.round(fallbackNumber)));
+  if (!Number.isFinite(parsed)) return normalizedFallback;
+  return Math.min(MAX_COMPACTION_TOKENS, Math.max(MIN_COMPACTION_TOKENS, parsed));
+}
+
 function getDefaultSettings() {
   return {
     apiBaseUrl: process.env.YOLO_AUTO_BASE_URL || process.env.OPENAI_BASE_URL || DEFAULT_API_BASE_URL,
@@ -63,6 +103,11 @@ function getDefaultSettings() {
     maxConcurrency: normalizeMaxConcurrency(process.env.YOLO_AUTO_MAX_CONCURRENCY, DEFAULT_MAX_CONCURRENCY),
     guardrails: getDefaultGuardrails(),
     tools: normalizeToolSettings(),
+    compaction: normalizeCompactionSettings({
+      enabled: process.env.YOLO_AUTO_COMPACTION_ENABLED,
+      reserveTokens: process.env.YOLO_AUTO_COMPACTION_RESERVE_TOKENS,
+      keepRecentTokens: process.env.YOLO_AUTO_COMPACTION_KEEP_RECENT_TOKENS
+    }),
     workspaceRoot: getHomeWorkspacePath(),
     activeSessionId: '',
     skills: {
@@ -135,6 +180,7 @@ function mergeSettings(defaults, saved = {}) {
     maxConcurrency: normalizeMaxConcurrency(source.maxConcurrency, defaults.maxConcurrency),
     guardrails: normalizeGuardrails(source.guardrails, defaults.guardrails),
     tools: normalizeToolSettings(source.tools, defaults.tools),
+    compaction: normalizeCompactionSettings(source.compaction, defaults.compaction),
     skills: {
       ...defaults.skills,
       ...(source.skills || {}),
@@ -281,6 +327,7 @@ module.exports = {
   saveSettings,
   normalizeCompatibilityPreset,
   normalizeMaxConcurrency,
+  normalizeCompactionSettings,
   normalizeGuardrails,
   normalizeToolSettings,
   isKnownToolName,

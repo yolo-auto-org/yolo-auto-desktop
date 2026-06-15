@@ -19,6 +19,12 @@ const AUTO_SCROLL_INTERACTION_PAUSE_MS = 900;
 const AUTO_SCROLL_PROGRAMMATIC_RESET_MS = 80;
 const SESSION_REVIEW_STORAGE_KEY = 'yolo-session-reviews';
 const SESSION_REVIEW_LIMIT = 500;
+const DEFAULT_COMPACTION_SETTINGS = Object.freeze({ enabled: true, reserveTokens: 32_000, keepRecentTokens: 20_000 });
+const CHAT_HISTORY_PAGE_SIZE = 80;
+const MESSAGE_TEXT_COLLAPSE_CHARS = 24_000;
+const THINKING_TEXT_COLLAPSE_CHARS = 12_000;
+const MESSAGE_PREVIEW_HEAD_CHARS = 12_000;
+const MESSAGE_PREVIEW_TAIL_CHARS = 6_000;
 
 const state = {
   settings: {},
@@ -42,6 +48,13 @@ const state = {
     userInteracting: false,
     interactionTimer: 0
   },
+  chatRender: {
+    items: [],
+    renderedStart: 0,
+    partialAssistantText: '',
+    partialAssistantThinkingText: '',
+    renderingHistory: false
+  },
   queues: { steering: [], followUp: [] },
   concurrency: { maxConcurrency: 2, runningCount: 0, runningSessions: [], canStart: true, pendingText: '' },
   skills: { skills: [], diagnostics: [], extraDirs: [], loading: false, error: '' },
@@ -64,6 +77,9 @@ const els = {
   statusIndicator: document.getElementById('statusIndicator'),
   statusLight: document.getElementById('statusLight'),
   statusText: document.getElementById('statusText'),
+  sessionMetrics: document.getElementById('sessionMetrics'),
+  contextUsageText: document.getElementById('contextUsageText'),
+  tokenUsageText: document.getElementById('tokenUsageText'),
   thinkingLevelSelect: document.getElementById('thinkingLevelSelect'),
   themeToggleBtn: document.getElementById('themeToggleBtn'),
   messages: document.getElementById('messages'),
@@ -119,6 +135,9 @@ const els = {
   settingsThinkingLevelInput: document.getElementById('settingsThinkingLevelInput'),
   compatibilityPresetInput: document.getElementById('compatibilityPresetInput'),
   maxConcurrencyInput: document.getElementById('maxConcurrencyInput'),
+  compactionEnabledInput: document.getElementById('compactionEnabledInput'),
+  compactionReserveTokensInput: document.getElementById('compactionReserveTokensInput'),
+  compactionKeepRecentTokensInput: document.getElementById('compactionKeepRecentTokensInput'),
   guardrailsModeInput: document.getElementById('guardrailsModeInput'),
   concurrencyModal: document.getElementById('concurrencyModal'),
   concurrencyModalSummary: document.getElementById('concurrencyModalSummary'),
@@ -1132,10 +1151,38 @@ function getGuardrailsMode(settings = state.settings) {
   return normalizeGuardrailsMode(settings?.guardrails?.mode || settings?.guardrailsMode || 'ask');
 }
 
+function normalizeCompactionSettings(value = {}, fallback = DEFAULT_COMPACTION_SETTINGS) {
+  const source = value && typeof value === 'object' ? value : {};
+  const fallbackSource = fallback && typeof fallback === 'object' ? fallback : DEFAULT_COMPACTION_SETTINGS;
+  return {
+    enabled: normalizeBooleanSetting(source.enabled, normalizeBooleanSetting(fallbackSource.enabled, DEFAULT_COMPACTION_SETTINGS.enabled)),
+    reserveTokens: normalizeTokenSetting(source.reserveTokens, normalizeTokenSetting(fallbackSource.reserveTokens, DEFAULT_COMPACTION_SETTINGS.reserveTokens)),
+    keepRecentTokens: normalizeTokenSetting(source.keepRecentTokens, normalizeTokenSetting(fallbackSource.keepRecentTokens, DEFAULT_COMPACTION_SETTINGS.keepRecentTokens))
+  };
+}
+
+function normalizeBooleanSetting(value, fallback = true) {
+  if (typeof value === 'boolean') return value;
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return fallback !== false;
+  if (['1', 'true', 'yes', 'on', 'enabled', 'enable'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off', 'disabled', 'disable'].includes(raw)) return false;
+  return fallback !== false;
+}
+
+function normalizeTokenSetting(value, fallback) {
+  const number = Number.parseInt(String(value ?? ''), 10);
+  const fallbackNumber = Number.isFinite(Number(fallback)) ? Number(fallback) : DEFAULT_COMPACTION_SETTINGS.reserveTokens;
+  const normalizedFallback = Math.min(1_000_000, Math.max(1_000, Math.round(fallbackNumber)));
+  if (!Number.isFinite(number)) return normalizedFallback;
+  return Math.min(1_000_000, Math.max(1_000, number));
+}
+
 function renderChrome() {
   applyTheme(state.theme);
   updateBusyUi();
   renderQueue();
+  renderSessionMetrics();
   renderSessions();
 
   const activeWorkspace = getActiveWorkspace();
@@ -1172,6 +1219,74 @@ function renderChrome() {
       els.modelName.classList.add('empty');
     }
   }
+}
+
+function renderSessionMetrics() {
+  const metrics = state.activeSession?.metrics || null;
+  if (!els.sessionMetrics || !els.contextUsageText || !els.tokenUsageText) return;
+
+  if (!metrics) {
+    els.contextUsageText.textContent = 'Context: ? / 128k';
+    els.tokenUsageText.textContent = 'I/O: 0 in · 0 out';
+    els.sessionMetrics.title = 'Session context and token usage are not available yet.';
+    return;
+  }
+
+  els.contextUsageText.textContent = `Context: ${formatContextMetric(metrics.context)}`;
+  els.tokenUsageText.textContent = `I/O: ${formatTokenMetric(metrics.usage?.input)} in · ${formatTokenMetric(metrics.usage?.output)} out`;
+  els.sessionMetrics.title = buildSessionMetricsTitle(metrics);
+}
+
+function formatContextMetric(context = {}) {
+  const windowTokens = normalizeMetricNumber(context.contextWindow, 128_000);
+  const tokens = context.tokens === null || context.tokens === undefined ? null : normalizeMetricNumber(context.tokens, 0);
+  const percent = context.percent === null || context.percent === undefined ? null : Number(context.percent);
+  const percentText = Number.isFinite(percent) ? ` (${Math.round(percent)}%)` : '';
+  return `${tokens === null ? '?' : formatTokenMetric(tokens)} / ${formatTokenMetric(windowTokens)}${percentText}`;
+}
+
+function formatCompactSessionMetrics(metrics = {}) {
+  if (!metrics.context && !metrics.usage) return '';
+  const context = metrics.context || {};
+  const usage = metrics.usage || {};
+  const parts = [];
+  if (Number.isFinite(Number(context.percent))) parts.push(`${Math.round(Number(context.percent))}% ctx`);
+  else if (context.contextWindow) parts.push('? ctx');
+  if (Number(usage.input) || Number(usage.output)) parts.push(`${formatTokenMetric(usage.input)} in/${formatTokenMetric(usage.output)} out`);
+  return parts.join(' · ');
+}
+
+function buildSessionMetricsTitle(metrics = {}) {
+  const usage = metrics.usage || {};
+  const compaction = metrics.compaction || {};
+  return [
+    `Context: ${formatContextMetric(metrics.context || {})}`,
+    `Input tokens: ${formatTokenMetric(usage.input)}`,
+    `Output tokens: ${formatTokenMetric(usage.output)}`,
+    `Total tokens: ${formatTokenMetric(usage.total)}`,
+    `Cost: $${Number(usage.cost || 0).toFixed(4)}`,
+    `Auto compaction: ${compaction.enabled === false ? 'off' : 'on'}`,
+    compaction.reserveTokens ? `Reserve tokens: ${formatTokenMetric(compaction.reserveTokens)}` : '',
+    compaction.keepRecentTokens ? `Keep recent tokens: ${formatTokenMetric(compaction.keepRecentTokens)}` : '',
+    compaction.lastCompactedAt ? `Last compaction: ${formatDateTime(compaction.lastCompactedAt)}` : ''
+  ].filter(Boolean).join('\n');
+}
+
+function formatTokenMetric(value) {
+  const number = normalizeMetricNumber(value, 0);
+  if (number >= 1_000_000) return `${trimMetricNumber(number / 1_000_000)}M`;
+  if (number >= 1_000) return `${trimMetricNumber(number / 1_000)}k`;
+  return String(number);
+}
+
+function trimMetricNumber(value) {
+  const fixed = value >= 10 ? value.toFixed(0) : value.toFixed(1);
+  return fixed.replace(/\.0$/, '');
+}
+
+function normalizeMetricNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.round(number)) : fallback;
 }
 
 function getActiveWorkspace() {
@@ -1666,8 +1781,10 @@ function createSessionTableRow(session) {
   if (previewHoverText) title.title = previewHoverText;
   const meta = document.createElement('div');
   meta.className = 'session-preview-meta';
-  meta.textContent = [session.workspaceRoot, session.sessionFile].filter(Boolean).join(' · ');
-  if (previewHoverText) meta.title = previewHoverText;
+  const metricsText = formatCompactSessionMetrics(session.metrics);
+  meta.textContent = [session.workspaceRoot, metricsText, session.sessionFile].filter(Boolean).join(' · ');
+  const metaTitle = [previewHoverText, metricsText ? buildSessionMetricsTitle(session.metrics) : ''].filter(Boolean).join('\n\n');
+  if (metaTitle) meta.title = metaTitle;
   preview.appendChild(title);
   if (meta.textContent) preview.appendChild(meta);
 
@@ -1825,6 +1942,21 @@ function createSessionItem(session, { showWorkspace = false, closeOnSelect = fal
     meta.appendChild(workspace);
   }
 
+  const metricsText = formatCompactSessionMetrics(session.metrics);
+  if (metricsText) {
+    const separator = document.createElement('span');
+    separator.className = 'session-item-separator';
+    separator.textContent = '·';
+
+    const usage = document.createElement('span');
+    usage.className = 'session-item-usage';
+    usage.textContent = metricsText;
+    usage.title = buildSessionMetricsTitle(session.metrics);
+
+    meta.appendChild(separator);
+    meta.appendChild(usage);
+  }
+
   button.appendChild(title);
   button.appendChild(meta);
   button.addEventListener('click', async () => {
@@ -1964,7 +2096,7 @@ async function sendPrompt(providedText) {
     updateLocalSessionAfterSend(text, runSessionId);
     const response = await window.yolo.sendMessage(runSessionId, text);
     if (state.activeSessionId === runSessionId && response?.content && state.currentAssistant && isAssistantShellEmpty(state.currentAssistant)) {
-      state.currentAssistant.content.innerHTML = renderText(response.content || '(no response)');
+      setAssistantContent(state.currentAssistant, response.content || '(no response)');
     }
   } catch (error) {
     const errorText = displayError(error);
@@ -1972,8 +2104,12 @@ async function sendPrompt(providedText) {
       if (state.activeSessionId === runSessionId) {
         setPromptText(text);
         autoGrowPrompt();
-        if (state.currentAssistant && isAssistantShellEmpty(state.currentAssistant)) state.currentAssistant.message.remove();
+        if (state.currentAssistant && isAssistantShellEmpty(state.currentAssistant)) {
+          state.currentAssistant.message.remove();
+          removeHistoryItem(state.currentAssistant.historyItem);
+        }
         optimisticUser?.message?.remove();
+        removeHistoryItem(optimisticUser?.historyItem);
         state.currentAssistant = null;
         await refreshConcurrencyState();
         openConcurrencyModal(text);
@@ -1983,8 +2119,7 @@ async function sendPrompt(providedText) {
       markPendingToolsCancelled(state.currentAssistant);
       setStatus('Cancelled');
     } else if (state.activeSessionId === runSessionId) {
-      ensureAssistantShell().content.innerHTML = `<span class="error-text">${escapeHtml(errorText)}</span>`;
-      setStatus('Error');
+      renderAssistantError(errorText);
     }
   } finally {
     state.sessions = state.sessions.map((session) => {
@@ -2108,6 +2243,24 @@ function restoreQueuedToEditor(queued) {
   focusPromptEnd();
 }
 
+function recordHistoryItem(item) {
+  if (state.chatRender.renderingHistory || !item) return null;
+  state.chatRender.items.push(item);
+  return item;
+}
+
+function removeHistoryItem(item) {
+  if (!item) return;
+  const index = state.chatRender.items.indexOf(item);
+  if (index === -1) return;
+  state.chatRender.items.splice(index, 1);
+  state.chatRender.renderedStart = Math.min(state.chatRender.renderedStart, state.chatRender.items.length);
+}
+
+function assistantHistoryItemHasDisplay(item = {}) {
+  return String(item.content || item.thinking || item.error || '').trim() || (item.tools || []).length > 0;
+}
+
 function addMessage(role, content, options = {}) {
   const message = document.createElement('article');
   message.className = `message ${role}`;
@@ -2122,7 +2275,7 @@ function addMessage(role, content, options = {}) {
   let thinking;
   if (role === 'assistant' && String(options.thinking || '').trim()) {
     thinking = createThinkingBlock();
-    thinking.content.innerHTML = renderText(options.thinking);
+    setRenderedText(thinking.content, options.thinking, { limit: THINKING_TEXT_COLLAPSE_CHARS, label: 'thinking' });
     thinking.root.hidden = false;
     message.classList.add('has-thinking');
     bubble.appendChild(thinking.root);
@@ -2130,14 +2283,15 @@ function addMessage(role, content, options = {}) {
 
   const contentEl = document.createElement('div');
   contentEl.className = 'content';
-  contentEl.innerHTML = renderText(content);
+  setRenderedText(contentEl, content);
 
   bubble.appendChild(contentEl);
   message.appendChild(avatar);
   message.appendChild(bubble);
   els.messages.appendChild(message);
+  const historyItem = recordHistoryItem({ type: 'message', role, content });
   scrollToBottom();
-  return { message, bubble, thinking: thinking?.root, thinkingContent: thinking?.content, content: contentEl };
+  return { message, bubble, thinking: thinking?.root, thinkingContent: thinking?.content, content: contentEl, historyItem };
 }
 
 function addSkillMessage(skillBlock) {
@@ -2170,8 +2324,9 @@ function addSkillMessage(skillBlock) {
   message.appendChild(avatar);
   message.appendChild(bubble);
   els.messages.appendChild(message);
+  const historyItem = recordHistoryItem({ type: 'skill', skillBlock });
   scrollToBottom();
-  return { message, bubble, content: contentEl };
+  return { message, bubble, content: contentEl, historyItem };
 }
 
 function createThinkingBlock() {
@@ -2216,9 +2371,10 @@ function addAssistantShell() {
   message.appendChild(avatar);
   message.appendChild(bubble);
   els.messages.appendChild(message);
+  const historyItem = recordHistoryItem({ type: 'assistant', content: '', thinking: '', tools: [], error: '' });
   scrollToBottom();
 
-  return { message, bubble, thinking: thinking.root, thinkingContent: thinking.content, activity, content, tools: new Map() };
+  return { message, bubble, thinking: thinking.root, thinkingContent: thinking.content, activity, content, tools: new Map(), historyItem };
 }
 
 function ensureAssistantShell() {
@@ -2230,9 +2386,17 @@ function setAssistantThinking(shell, thinkingText) {
   const text = String(thinkingText || '').trim();
   if (!shell?.thinking || !shell?.thinkingContent || !text) return;
 
-  shell.thinkingContent.innerHTML = renderText(text);
+  setRenderedText(shell.thinkingContent, text, { limit: THINKING_TEXT_COLLAPSE_CHARS, label: 'thinking' });
+  if (shell.historyItem) shell.historyItem.thinking = text;
   shell.thinking.hidden = false;
   shell.message.classList.add('has-thinking');
+}
+
+function setAssistantContent(shell, contentText) {
+  if (!shell?.content) return;
+  const text = String(contentText || '');
+  setRenderedText(shell.content, text || '(no response)');
+  if (shell.historyItem) shell.historyItem.content = text;
 }
 
 function markAssistantHasActivity(shell) {
@@ -2246,8 +2410,21 @@ function isAssistantShellEmpty(shell) {
 }
 
 function addAssistantError(error) {
+  renderAssistantError(error);
+}
+
+function renderAssistantError(error) {
   removeWelcome();
-  addMessage('assistant', `Error: ${displayError(error)}`);
+  const errorText = displayError(error);
+  const shell = ensureAssistantShell();
+  if (shell.errorText === errorText) return;
+  markPendingToolsFailed(shell, errorText);
+  shell.content.innerHTML = `<span class="error-text">Error: ${escapeHtml(errorText)}</span>`;
+  if (shell.historyItem) shell.historyItem.error = errorText;
+  shell.message.classList.add('has-error');
+  shell.errorText = errorText;
+  setStatus(`Error: ${errorText}`);
+  scrollToBottom();
 }
 
 function displayError(error) {
@@ -2273,11 +2450,17 @@ function handleAgentEvent(event) {
     if (active) {
       state.activeSession = active;
       state.busy = !!active.busy;
+      renderSessionMetrics();
       updateBusyUi();
     }
     renderSessions();
     renderWorkspaceSelect();
     renderRunningSessions();
+    return;
+  }
+
+  if (event.type === 'session:metrics') {
+    applySessionMetricsEvent(event);
     return;
   }
 
@@ -2287,6 +2470,11 @@ function handleAgentEvent(event) {
 
   if (event.type === 'status') {
     setStatus(event.message || 'Ready');
+    return;
+  }
+
+  if (event.type === 'run:error') {
+    renderAssistantError(event.message || 'Run failed');
     return;
   }
 
@@ -2308,7 +2496,7 @@ function handleAgentEvent(event) {
 
   if (event.type === 'assistant:content') {
     const shell = ensureAssistantShell();
-    shell.content.innerHTML = renderText(event.content || '(no response)');
+    setAssistantContent(shell, event.content || '(no response)');
     scrollToBottom();
     return;
   }
@@ -2316,6 +2504,7 @@ function handleAgentEvent(event) {
   if (event.type === 'user:delivered') {
     if (state.currentAssistant && isAssistantShellEmpty(state.currentAssistant)) {
       state.currentAssistant.message.remove();
+      removeHistoryItem(state.currentAssistant.historyItem);
     }
     addMessage('user', event.text || '');
     state.currentAssistant = addAssistantShell();
@@ -2335,6 +2524,7 @@ function handleAgentEvent(event) {
     const item = createToolItem(event);
     shell.tools.set(event.id, item);
     shell.activity.appendChild(item.root);
+    trackAssistantHistoryTool(shell, item, event, { status: 'pending' });
     markAssistantHasActivity(shell);
     scrollToBottom();
   }
@@ -2358,6 +2548,7 @@ function handleAgentEvent(event) {
       item.root.title = 'Click to show or hide tool output';
       item.preview.textContent = event.result.preview;
     }
+    trackAssistantHistoryTool(shell, item, event, { status: ok ? 'ok' : 'error', result: event.result });
     scrollToBottom();
     return;
   }
@@ -2371,9 +2562,37 @@ function handleAgentEvent(event) {
     }
     markAssistantHasActivity(shell);
     markToolCancelled(item, event);
+    trackAssistantHistoryTool(shell, item, event, { status: 'cancelled', result: event.result || { ok: false, summary: 'Cancelled' } });
     scrollToBottom();
     return;
   }
+}
+
+function applySessionMetricsEvent(event) {
+  const sessionId = event.sessionId;
+  if (!sessionId) return;
+  const incoming = event.session || { id: sessionId, metrics: event.metrics };
+  state.sessions = state.sessions.map((session) => session.id === sessionId
+    ? { ...session, ...incoming, metrics: event.metrics || incoming.metrics || session.metrics }
+    : session);
+
+  if (!state.sessions.some((session) => session.id === sessionId) && incoming.id) {
+    state.sessions.unshift(incoming);
+  }
+
+  if (sessionId === state.activeSessionId) {
+    state.activeSession = {
+      ...(state.activeSession || {}),
+      ...incoming,
+      metrics: event.metrics || incoming.metrics || state.activeSession?.metrics
+    };
+    state.busy = !!state.activeSession.busy;
+    renderSessionMetrics();
+    updateBusyUi();
+  }
+
+  renderSessions();
+  renderRunningSessions();
 }
 
 function renderQueue() {
@@ -2397,8 +2616,45 @@ function renderQueue() {
 function markPendingToolsCancelled(shell = state.currentAssistant) {
   if (!shell?.tools) return;
   for (const item of shell.tools.values()) {
-    if (item?.root?.classList.contains('pending')) markToolCancelled(item);
+    if (!item?.root?.classList.contains('pending')) continue;
+    markToolCancelled(item);
+    trackAssistantHistoryTool(shell, item, {}, { status: 'cancelled', result: { ok: false, summary: 'Cancelled' } });
   }
+}
+
+function markPendingToolsFailed(shell = state.currentAssistant, message = 'Failed') {
+  if (!shell?.tools) return;
+  for (const item of shell.tools.values()) {
+    if (!item?.root?.classList.contains('pending')) continue;
+    item.root.classList.remove('pending', 'ok', 'cancelled');
+    item.root.classList.add('error');
+    item.summary.textContent = compactToolLabel(item.name, item.args, 'Failed');
+    if (item.preview) {
+      item.root.classList.add('has-preview');
+      item.root.title = 'Click to show or hide tool output';
+      item.preview.textContent = message;
+    }
+    trackAssistantHistoryTool(shell, item, {}, { status: 'error', result: { ok: false, summary: 'Failed', preview: message } });
+  }
+}
+
+function trackAssistantHistoryTool(shell, item, event = {}, patch = {}) {
+  if (!shell?.historyItem || !item) return;
+  const tools = Array.isArray(shell.historyItem.tools) ? shell.historyItem.tools : [];
+  shell.historyItem.tools = tools;
+
+  const id = event.id || item.id || item.historyTool?.id || `tool-${tools.length}`;
+  let record = item.historyTool || tools.find((tool) => tool.id === id);
+  if (!record) {
+    record = { id, name: event.name || item.name || '', args: event.args || item.args || {}, status: 'pending' };
+    tools.push(record);
+  }
+
+  record.id = id;
+  record.name = event.name || item.name || record.name || '';
+  record.args = event.args || item.args || record.args || {};
+  Object.assign(record, patch);
+  item.historyTool = record;
 }
 
 function markToolCancelled(item, event = {}) {
@@ -2408,6 +2664,58 @@ function markToolCancelled(item, event = {}) {
   item.root.classList.remove('pending', 'ok', 'error');
   item.root.classList.add('cancelled');
   item.summary.textContent = compactToolLabel(item.name, item.args, event.result?.summary || 'Cancelled');
+}
+
+function addAssistantHistoryMessage(item = {}) {
+  const { content = '', thinking = '', tools = [], error = '' } = item;
+  const shell = addAssistantShell();
+  shell.historyItem = item;
+  if (thinking) setAssistantThinking(shell, thinking);
+  for (const [index, tool] of tools.entries()) {
+    const item = createToolItem({
+      id: tool.id || `history-tool-${Date.now()}-${index}`,
+      name: tool.name,
+      args: tool.args || {}
+    });
+    item.historyTool = tool;
+    shell.tools.set(tool.id || item.id || `history-tool-${index}`, item);
+    shell.activity.appendChild(item.root);
+    markAssistantHasActivity(shell);
+    applyToolHistoryState(item, tool);
+  }
+  if (error) {
+    shell.content.innerHTML = `<span class="error-text">Error: ${escapeHtml(displayError(error))}</span>`;
+    shell.message.classList.add('has-error');
+  } else if (content) {
+    setRenderedText(shell.content, content);
+  }
+  state.currentAssistant = null;
+  scrollToBottom();
+  return shell;
+}
+
+function applyToolHistoryState(item, tool = {}) {
+  if (!item?.root) return;
+  const status = String(tool.status || '').toLowerCase();
+  item.name = tool.name || item.name;
+  item.args = tool.args || item.args || {};
+
+  if (status === 'cancelled' || status === 'canceled') {
+    markToolCancelled(item, { name: item.name, args: item.args, result: tool.result });
+    return;
+  }
+
+  if (status === 'ok' || status === 'error' || tool.result) {
+    const ok = status ? status === 'ok' : tool.result?.ok !== false;
+    item.root.classList.remove('pending', 'cancelled');
+    item.root.classList.add(ok ? 'ok' : 'error');
+    item.summary.textContent = compactToolLabel(item.name, item.args, tool.result?.summary || (ok ? 'Completed' : 'Failed'));
+    if (tool.result?.preview) {
+      item.root.classList.add('has-preview');
+      item.root.title = 'Click to show or hide tool output';
+      item.preview.textContent = tool.result.preview;
+    }
+  }
 }
 
 function createToolItem(event) {
@@ -2443,7 +2751,7 @@ function createToolItem(event) {
     if (root.classList.contains('has-preview')) root.classList.toggle('expanded');
   });
 
-  return { root, summary, preview, name: event.name, args: event.args || {} };
+  return { root, summary, preview, id: event.id || '', name: event.name, args: event.args || {} };
 }
 
 function createSkillActivityItem(event) {
@@ -2531,6 +2839,10 @@ async function openSettings(tab = 'model') {
   els.settingsThinkingLevelInput.value = normalizeThinkingLevel(state.settings.thinkingLevel);
   if (els.compatibilityPresetInput) els.compatibilityPresetInput.value = normalizeCompatibilityPreset(state.settings.compatibilityPreset);
   if (els.maxConcurrencyInput) els.maxConcurrencyInput.value = normalizeMaxConcurrency(state.settings.maxConcurrency);
+  const compaction = normalizeCompactionSettings(state.settings.compaction);
+  if (els.compactionEnabledInput) els.compactionEnabledInput.checked = compaction.enabled;
+  if (els.compactionReserveTokensInput) els.compactionReserveTokensInput.value = compaction.reserveTokens;
+  if (els.compactionKeepRecentTokensInput) els.compactionKeepRecentTokensInput.value = compaction.keepRecentTokens;
   if (els.guardrailsModeInput) els.guardrailsModeInput.value = getGuardrailsMode();
   renderToolsPane();
   els.settingsModal.classList.remove('hidden');
@@ -2648,7 +2960,8 @@ async function saveSettings() {
     guardrails: {
       mode: normalizeGuardrailsMode(els.guardrailsModeInput?.value)
     },
-    tools: collectToolSettingsFromUi()
+    tools: collectToolSettingsFromUi(),
+    compaction: collectCompactionSettingsFromUi()
   };
 
   try {
@@ -2664,6 +2977,15 @@ async function saveSettings() {
   } catch (error) {
     setStatus(error.message || 'Failed to save settings');
   }
+}
+
+function collectCompactionSettingsFromUi() {
+  const current = normalizeCompactionSettings(state.settings.compaction);
+  return normalizeCompactionSettings({
+    enabled: els.compactionEnabledInput ? els.compactionEnabledInput.checked : current.enabled,
+    reserveTokens: els.compactionReserveTokensInput ? els.compactionReserveTokensInput.value : current.reserveTokens,
+    keepRecentTokens: els.compactionKeepRecentTokensInput ? els.compactionKeepRecentTokensInput.value : current.keepRecentTokens
+  }, current);
 }
 
 async function clearApiKey() {
@@ -2747,63 +3069,125 @@ function parseSkillBlock(text) {
 }
 
 function renderMessagesFromHistory(messages = [], options = {}) {
-  const partialAssistantText = String(options.partialAssistantText || '').trim();
-  const partialAssistantThinkingText = String(options.partialAssistantThinkingText || '').trim();
-  els.messages.innerHTML = '';
-  state.currentAssistant = null;
+  const items = normalizeHistoryMessages(messages);
+  state.chatRender.items = items;
+  state.chatRender.renderedStart = Math.max(0, items.length - CHAT_HISTORY_PAGE_SIZE);
+  state.chatRender.partialAssistantText = String(options.partialAssistantText || '').trim();
+  state.chatRender.partialAssistantThinkingText = String(options.partialAssistantThinkingText || '').trim();
+  renderVisibleHistory({ forceBottom: true });
+}
 
-  let displayed = 0;
-  let lastDisplayRole = '';
+function normalizeHistoryMessages(messages = []) {
+  const items = [];
+
   for (const message of messages) {
     if (message?.role === 'user' && typeof message.content === 'string' && message.content.trim()) {
       const skillBlock = parseSkillBlock(message.content);
       if (skillBlock) {
-        addSkillMessage(skillBlock);
-        displayed += 1;
-        lastDisplayRole = 'skill';
-        if (skillBlock.userMessage) {
-          addMessage('user', skillBlock.userMessage);
-          displayed += 1;
-          lastDisplayRole = 'user';
-        }
+        items.push({ type: 'skill', skillBlock });
+        if (skillBlock.userMessage) items.push({ type: 'message', role: 'user', content: skillBlock.userMessage });
       } else {
-        addMessage('user', message.content);
-        displayed += 1;
-        lastDisplayRole = 'user';
+        items.push({ type: 'message', role: 'user', content: message.content });
       }
     } else if (message?.role === 'assistant') {
       const content = typeof message.content === 'string' ? message.content : '';
       const thinking = typeof message.thinking === 'string' ? message.thinking : '';
-      if (content.trim() || thinking.trim()) {
-        addMessage('assistant', content, { thinking });
-        displayed += 1;
-        lastDisplayRole = 'assistant';
+      const tools = Array.isArray(message.tools) ? message.tools : [];
+      const error = typeof message.error === 'string' ? message.error : '';
+      if (content.trim() || thinking.trim() || tools.length || error.trim()) {
+        items.push({ type: 'assistant', content, thinking, tools, error });
       }
     }
   }
 
-  if (displayed === 0) {
+  return items;
+}
+
+function renderVisibleHistory(options = {}) {
+  const items = state.chatRender.items || [];
+  const start = Math.max(0, Math.min(state.chatRender.renderedStart || 0, items.length));
+  const previousScrollHeight = els.messages.scrollHeight;
+  const previousScrollTop = els.messages.scrollTop;
+
+  els.messages.innerHTML = '';
+  state.currentAssistant = null;
+
+  if (items.length === 0) {
     clearMessages();
     return;
   }
 
-  if (state.busy) {
-    if (lastDisplayRole !== 'assistant') state.currentAssistant = addAssistantShell();
-    if (partialAssistantThinkingText) {
-      const shell = ensureAssistantShell();
-      setAssistantThinking(shell, partialAssistantThinkingText);
+  state.chatRender.renderingHistory = true;
+  if (start > 0) els.messages.appendChild(createHistoryPager(start));
+
+  let lastDisplayRole = '';
+  let lastAssistantShell = null;
+  for (const item of items.slice(start)) {
+    if (item.type === 'skill') {
+      addSkillMessage(item.skillBlock);
+      lastDisplayRole = 'skill';
+      lastAssistantShell = null;
+    } else if (item.type === 'message') {
+      addMessage(item.role, item.content);
+      lastDisplayRole = item.role;
+      lastAssistantShell = null;
+    } else if (item.type === 'assistant' && (state.busy || assistantHistoryItemHasDisplay(item))) {
+      lastAssistantShell = addAssistantHistoryMessage(item);
+      lastDisplayRole = 'assistant';
     }
-    if (partialAssistantText) {
-      const shell = ensureAssistantShell();
-      shell.content.innerHTML = renderText(partialAssistantText);
+  }
+  state.chatRender.renderingHistory = false;
+
+  if (state.busy) {
+    state.currentAssistant = lastDisplayRole === 'assistant' && lastAssistantShell
+      ? lastAssistantShell
+      : addAssistantShell();
+    if (state.chatRender.partialAssistantThinkingText) {
+      setAssistantThinking(state.currentAssistant, state.chatRender.partialAssistantThinkingText);
+    }
+    if (state.chatRender.partialAssistantText) {
+      setAssistantContent(state.currentAssistant, state.chatRender.partialAssistantText);
     }
   }
 
-  scrollToBottom({ force: true });
+  if (options.forceBottom) {
+    scrollToBottom({ force: true });
+  } else if (options.preserveScroll) {
+    els.messages.scrollTop = previousScrollTop + (els.messages.scrollHeight - previousScrollHeight);
+    updateReturnToBottomButton();
+  } else {
+    updateReturnToBottomButton();
+  }
+}
+
+function createHistoryPager(hiddenCount) {
+  const wrap = document.createElement('div');
+  wrap.className = 'history-pager-wrap';
+
+  const button = document.createElement('button');
+  button.className = 'history-pager';
+  button.type = 'button';
+  button.textContent = `Load ${Math.min(CHAT_HISTORY_PAGE_SIZE, hiddenCount)} older messages (${hiddenCount} hidden)`;
+  button.addEventListener('click', () => loadOlderMessages());
+
+  wrap.appendChild(button);
+  return wrap;
+}
+
+function loadOlderMessages() {
+  const previousStart = state.chatRender.renderedStart || 0;
+  if (previousStart <= 0) return;
+  state.chatRender.renderedStart = Math.max(0, previousStart - CHAT_HISTORY_PAGE_SIZE);
+  renderVisibleHistory({ preserveScroll: true });
 }
 
 function clearMessages() {
   state.stickToBottom = true;
+  state.chatRender.items = [];
+  state.chatRender.renderedStart = 0;
+  state.chatRender.partialAssistantText = '';
+  state.chatRender.partialAssistantThinkingText = '';
+  state.chatRender.renderingHistory = false;
   els.messages.innerHTML = '';
   const welcome = document.createElement('div');
   welcome.className = 'welcome-card';
@@ -2878,6 +3262,7 @@ function updateReturnToBottomButton() {
 function scrollToBottom(options = {}) {
   if (!els.messages) return;
   const force = options === true || options.force === true;
+  if (state.chatRender.renderingHistory && !force) return;
   const shouldStick = force || state.stickToBottom || state.autoScroll.pendingSticky || isNearBottom();
 
   if (force) {
@@ -2930,6 +3315,69 @@ function runAutoScrollFrame() {
   }
 
   updateReturnToBottomButton();
+}
+
+function setRenderedText(element, text, options = {}) {
+  if (!element) return;
+  const source = String(text || '');
+  const limit = Math.max(1_000, Number(options.limit) || MESSAGE_TEXT_COLLAPSE_CHARS);
+  const label = options.label || 'message';
+  const isLong = source.length > limit;
+  const expanded = isLong && element._yoloExpanded === true;
+  const displayText = isLong && !expanded ? createTextPreview(source, limit) : source;
+
+  element.innerHTML = renderText(displayText);
+  element._yoloSourceText = source;
+
+  if (!isLong) {
+    element._yoloExpanded = false;
+    return;
+  }
+
+  const notice = document.createElement('div');
+  notice.className = 'message-truncation';
+
+  const summary = document.createElement('span');
+  summary.textContent = expanded
+    ? `${capitalize(label)} expanded (${formatNumber(source.length)} chars).`
+    : `${capitalize(label)} preview only; ${formatNumber(source.length - displayText.length)} chars hidden.`;
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = expanded ? 'Collapse' : 'Show full';
+  button.addEventListener('click', () => {
+    element._yoloExpanded = !expanded;
+    setRenderedText(element, source, options);
+    scrollToBottom();
+  });
+
+  notice.appendChild(summary);
+  notice.appendChild(button);
+  element.appendChild(notice);
+}
+
+function createTextPreview(text, limit) {
+  const source = String(text || '');
+  if (source.length <= limit) return source;
+  const headLength = Math.min(MESSAGE_PREVIEW_HEAD_CHARS, Math.floor(limit * 0.68), source.length);
+  const tailLength = Math.min(MESSAGE_PREVIEW_TAIL_CHARS, Math.max(1_000, limit - headLength), Math.max(0, source.length - headLength));
+  const hidden = Math.max(0, source.length - headLength - tailLength);
+  return [
+    source.slice(0, headLength).trimEnd(),
+    '',
+    `… ${formatNumber(hidden)} chars hidden. Click “Show full” to render the entire message. …`,
+    '',
+    source.slice(source.length - tailLength).trimStart()
+  ].join('\n');
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat().format(Math.max(0, Number(value) || 0));
+}
+
+function capitalize(value) {
+  const text = String(value || '');
+  return text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : '';
 }
 
 function renderText(text) {

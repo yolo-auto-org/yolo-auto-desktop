@@ -4,7 +4,7 @@ const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const { APP_ID, getAppIcon } = require('./app-icon');
 const { setupAutoUpdates, checkForUpdates, getUpdateStatus } = require('./auto-updater');
-const { loadSettings, saveSettings, normalizeCompatibilityPreset, normalizeGuardrails, normalizeMaxConcurrency, normalizeToolSettings, isKnownToolName, TOOL_DEFINITIONS } = require('./settings');
+const { loadSettings, saveSettings, normalizeCompatibilityPreset, normalizeGuardrails, normalizeMaxConcurrency, normalizeCompactionSettings, normalizeToolSettings, isKnownToolName, TOOL_DEFINITIONS } = require('./settings');
 const { createLogger } = require('./logger');
 const { ensureHomeBase, getHomeWorkspacePath } = require('./home-base');
 const { THINKING_LEVELS, normalizeThinkingLevel } = require('./thinking-levels');
@@ -153,6 +153,7 @@ function publicSettings() {
     maxConcurrency: normalizeMaxConcurrency(settings.maxConcurrency),
     guardrails: normalizeGuardrails(settings.guardrails),
     tools: normalizeToolSettings(settings.tools),
+    compaction: normalizeCompactionSettings(settings.compaction),
     toolDefinitions: TOOL_DEFINITIONS,
     thinkingLevels: THINKING_LEVELS
   };
@@ -170,6 +171,7 @@ function saveAppSettings(patch = {}) {
     maxConcurrency: normalizeMaxConcurrency(settings.maxConcurrency),
     guardrails: normalizeGuardrails(settings.guardrails),
     tools: normalizeToolSettings(settings.tools),
+    compaction: normalizeCompactionSettings(settings.compaction),
     skills: settings.skills || {},
     agents: settings.agents || {},
     ...patch
@@ -252,19 +254,24 @@ function setupIpc() {
       compatibilityPreset: normalizeCompatibilityPreset(safeSettings.compatibilityPreset, settings.compatibilityPreset),
       maxConcurrency: normalizeMaxConcurrency(safeSettings.maxConcurrency, settings.maxConcurrency),
       guardrails: normalizeGuardrails(safeSettings.guardrails, settings.guardrails),
-      tools: normalizeToolSettings(safeSettings.tools, settings.tools)
+      tools: normalizeToolSettings(safeSettings.tools, settings.tools),
+      compaction: normalizeCompactionSettings(safeSettings.compaction, settings.compaction)
     };
 
     const toolsChanged = toolSettingsKey(patch.tools) !== toolSettingsKey(settings.tools);
+    const compactionChanged = compactionSettingsKey(patch.compaction) !== compactionSettingsKey(settings.compaction);
     const needsReload = patch.apiBaseUrl !== String(settings.apiBaseUrl || '').trim()
       || patch.model !== String(settings.model || '').trim()
       || patch.compatibilityPreset !== normalizeCompatibilityPreset(settings.compatibilityPreset)
-      || toolsChanged;
+      || toolsChanged
+      || compactionChanged;
 
     if (needsReload && sessionManager.hasBusySessions()) {
       throw new Error(toolsChanged
         ? 'Cancel running sessions before changing tool availability.'
-        : 'Cancel running sessions before changing model provider settings. Max concurrency can be changed by itself while sessions run.');
+        : compactionChanged
+          ? 'Cancel running sessions before changing context compaction settings.'
+          : 'Cancel running sessions before changing model provider settings. Max concurrency can be changed by itself while sessions run.');
     }
 
     saveAppSettings(patch);
@@ -460,7 +467,20 @@ function validateSettingsInput(value) {
     compatibilityPreset: validateString(input.compatibilityPreset ?? '', 'settings.compatibilityPreset', { max: 64 }),
     maxConcurrency: validateNumberLike(input.maxConcurrency, 'settings.maxConcurrency', { min: 1, max: 8 }),
     guardrails,
-    tools: validateToolsInput(input.tools)
+    tools: validateToolsInput(input.tools),
+    compaction: validateCompactionInput(input.compaction)
+  };
+}
+
+function validateCompactionInput(value) {
+  if (value === undefined || value === null) return undefined;
+  const compaction = validatePlainObject(value, 'settings.compaction');
+  return {
+    enabled: compaction.enabled === undefined || compaction.enabled === null
+      ? undefined
+      : validateBoolean(compaction.enabled, 'settings.compaction.enabled'),
+    reserveTokens: validateNumberLike(compaction.reserveTokens, 'settings.compaction.reserveTokens', { min: 1000, max: 1000000 }),
+    keepRecentTokens: validateNumberLike(compaction.keepRecentTokens, 'settings.compaction.keepRecentTokens', { min: 1000, max: 1000000 })
   };
 }
 
@@ -654,6 +674,10 @@ function setExtraSkillDirs(currentSkills = {}, extraDirs = []) {
 
 function toolSettingsKey(tools = {}) {
   return JSON.stringify(normalizeToolSettings(tools));
+}
+
+function compactionSettingsKey(compaction = {}) {
+  return JSON.stringify(normalizeCompactionSettings(compaction));
 }
 
 function normalizeSkillSettings(currentSkills = {}) {

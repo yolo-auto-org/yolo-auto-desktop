@@ -52,6 +52,9 @@ Supported env vars:
 - `YOLO_AUTO_THINKING_LEVEL` / `OPENAI_REASONING_EFFORT`
 - `YOLO_AUTO_COMPATIBILITY_PRESET` / `YOLO_AUTO_MODEL_COMPATIBILITY` (`openai` or `local-basic`)
 - `YOLO_AUTO_MAX_CONCURRENCY` (default `2`, clamped from `1` to `8`)
+- `YOLO_AUTO_COMPACTION_ENABLED` (default `true`)
+- `YOLO_AUTO_COMPACTION_RESERVE_TOKENS` (default `32000`, so auto-compaction starts at about 75% of the default 128k context window)
+- `YOLO_AUTO_COMPACTION_KEEP_RECENT_TOKENS` (default `20000`)
 - `YOLO_AUTO_GUARDRAILS` (`ask` or `off`) / `YOLO_AUTO_YOLO=1` to disable command protections
 
 ## Skills
@@ -77,6 +80,8 @@ Additional Pi skills can be added through Pi-style settings/resources under the 
 - Pi coding tools enabled: `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls`
 - Additional desktop web tools: `web_search`, `web_fetch`, `browser`, plus `get_web` compatibility
 - Pi context management: session persistence, retry settings, skills, prompt templates, extensions, and automatic compaction support through the SDK
+- Session context/usage visibility with active context meter, input/output token totals, and status updates
+- Context compaction settings in Settings, enabled by default with a 32k reserve (~75% of the default 128k context window)
 - Home base at `~/.yolo-auto-desktop` with Pi-style resources: `AGENTS.md`, `SOUL.md`, and skills in `~/.yolo-auto-desktop/skills`
 - Starter skills: `text-transform`, `web-research`, and `browser-automation`
 - OpenAI-compatible provider registration through the Pi model registry

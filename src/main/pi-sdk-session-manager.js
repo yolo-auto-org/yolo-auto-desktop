@@ -3,12 +3,13 @@ const fssync = require('node:fs');
 const path = require('node:path');
 const { getAppIcon } = require('./app-icon');
 const { shouldAskCommandApproval } = require('./command-guardrails');
-const { normalizeMaxConcurrency } = require('./settings');
+const { normalizeCompactionSettings, normalizeMaxConcurrency } = require('./settings');
+const { metricsFromAgentSession, metricsFromSessionFile, formatSessionMetrics } = require('./session-metrics');
 
 const PI_PROVIDER = 'yolo-openai-compatible';
 const DEFAULT_MODEL = 'qwen3.6-35b-a3b';
 const DEFAULT_BASE_URL = 'https://yolo-auto.com/v1';
-const DEFAULT_CONTEXT_WINDOW = 128_000;
+const DEFAULT_CONTEXT_WINDOW = 131_072;
 const DEFAULT_MAX_TOKENS = 16_384;
 const TOOL_TEXT_LIMIT = 50_000;
 const WEB_MAX_RESPONSE_BYTES = 8_000_000;
@@ -248,6 +249,7 @@ class PiSdkSessionManager {
       active.emptyResponseRetried = false;
       active.toolCalls.clear();
       active.cancelledToolCallIds.clear();
+      active.failedToolCallIds.clear();
       assertToolSettingsCompatibleWithSession(active);
 
       this.emit({ type: 'status', message: `Thinking (${displayPiThinkingLevel(active.session.thinkingLevel)})…`, sessionId: active.id });
@@ -268,6 +270,19 @@ class PiSdkSessionManager {
       }
 
       return { content };
+    } catch (error) {
+      if (isCannotContinueFromAssistantError(error)) {
+        this.log('error', 'pi:cannot-continue-from-assistant', this.continuationDiagnostics(active, error));
+      }
+      if (!active.cancelRequested && !isCancellationError(error)) {
+        const message = cleanErrorMessage(error);
+        this.setRuntimeStatus(active, 'error', message);
+        this.emitPendingToolFailures(active, message);
+        this.emit({ type: 'run:error', message, sessionId: active.id });
+        this.emitMetricsChanged(active);
+        this.emitSessionsChanged();
+      }
+      throw error;
     } finally {
       active.runInProgress = false;
       active.initialPromptText = '';
@@ -327,9 +342,8 @@ class PiSdkSessionManager {
       content = [
         `Session: ${stats.sessionId}`,
         stats.sessionFile ? `File: ${stats.sessionFile}` : '',
-        `Messages: ${stats.totalMessages} (${stats.userMessages} user, ${stats.assistantMessages} assistant, ${stats.toolCalls} tool calls)`,
-        `Tokens: ${stats.tokens.total}`,
-        `Cost: $${Number(stats.cost || 0).toFixed(4)}`
+        `Messages: ${stats.totalMessages} (${stats.userMessages} user, ${stats.assistantMessages} assistant, ${stats.toolCalls} tool calls, ${stats.toolResults} tool results)`,
+        ...formatSessionMetrics(this.runtimeMetrics(active))
       ].filter(Boolean).join('\n');
     } else if (command === 'tools') {
       content = active.session.getActiveToolNames().join(', ');
@@ -412,10 +426,14 @@ class PiSdkSessionManager {
     active.cancelRequested = true;
     const queued = active.session.clearQueue();
     this.emitPendingToolCancellations(active);
+    this.setRuntimeStatus(active, 'cancelling', 'Cancelling…');
     this.emit({ type: 'status', message: 'Cancelled', sessionId: active.id });
+    this.emitMetricsChanged(active);
     await active.session.abort();
     this.emitPendingToolCancellations(active);
     active.runInProgress = false;
+    this.setRuntimeStatus(active, 'cancelled', 'Cancelled');
+    this.emitMetricsChanged(active);
     this.emitSessionsChanged();
     return { ok: true, status: 'cancelled', busy: !!(active.session.isStreaming || active.runInProgress), queued };
   }
@@ -433,6 +451,24 @@ class PiSdkSessionManager {
         name: toolCall.name,
         args: toolCall.args || {},
         result: { ok: false, status: 'cancelled', summary: 'Cancelled' },
+        sessionId: active.id
+      });
+    }
+  }
+
+  emitPendingToolFailures(active, message = 'Failed') {
+    if (!active?.toolCalls?.size) return;
+    if (!active.failedToolCallIds) active.failedToolCallIds = new Set();
+
+    for (const [toolCallId, toolCall] of active.toolCalls.entries()) {
+      active.failedToolCallIds.add(toolCallId);
+      active.toolCalls.delete(toolCallId);
+      this.emit({
+        type: 'tool:result',
+        id: toolCallId,
+        name: toolCall.name,
+        args: toolCall.args || {},
+        result: { ok: false, summary: 'Failed', preview: String(message || 'Failed') },
         sessionId: active.id
       });
     }
@@ -516,11 +552,15 @@ class PiSdkSessionManager {
       initialUserSeen: false,
       toolCalls: new Map(),
       cancelledToolCallIds: new Set(),
+      failedToolCallIds: new Set(),
       seenSkillKeys: new Set(),
       suppressedUserTexts: new Set(),
       cancelRequested: false,
       emptyResponseRetried: false,
-      runInProgress: false
+      runInProgress: false,
+      statusState: 'idle',
+      statusMessage: 'Ready',
+      statusUpdatedAt: new Date().toISOString()
     };
 
     runtimeRef.current = active;
@@ -552,6 +592,7 @@ class PiSdkSessionManager {
     const apiKey = String(settings.apiKey || '').trim();
     const modelId = String(settings.model || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
     const compatibilityPreset = normalizeCompatibilityPreset(settings.compatibilityPreset);
+    const compaction = normalizeCompactionSettings(settings.compaction);
     const piThinkingLevel = compatibilityPreset === 'local-basic'
       ? 'off'
       : toPiThinkingLevel(thinkingLevel, settings.thinkingLevel);
@@ -580,11 +621,7 @@ class PiSdkSessionManager {
       sessionDir: this.sessionDir,
       steeringMode: 'one-at-a-time',
       followUpMode: 'one-at-a-time',
-      compaction: {
-        enabled: true,
-        reserveTokens: 16_384,
-        keepRecentTokens: 20_000
-      },
+      compaction,
       retry: {
         enabled: true,
         maxRetries: 4,
@@ -782,7 +819,10 @@ class PiSdkSessionManager {
     const sessionId = active.id;
 
     if (event.type === 'agent_start') {
-      this.emit({ type: 'status', message: `Thinking (${displayPiThinkingLevel(active.session.thinkingLevel)})…`, sessionId });
+      const message = `Thinking (${displayPiThinkingLevel(active.session.thinkingLevel)})…`;
+      this.setRuntimeStatus(active, 'running', message);
+      this.emit({ type: 'status', message, sessionId });
+      this.emitMetricsChanged(active);
       this.emitSessionsChanged();
       return;
     }
@@ -834,8 +874,11 @@ class PiSdkSessionManager {
           this.emit({ type: 'assistant:content', content, sessionId });
         }
         if (event.message.errorMessage) {
+          this.setRuntimeStatus(active, 'error', event.message.errorMessage);
           this.emit({ type: 'status', message: event.message.errorMessage, sessionId });
+          this.emit({ type: 'run:error', message: event.message.errorMessage, sessionId });
         }
+        this.emitMetricsChanged(active);
       } else if (event.message?.role === 'user') {
         const text = messageText(event.message);
         if (active.suppressedUserTexts?.has(text)) {
@@ -880,6 +923,10 @@ class PiSdkSessionManager {
         active.cancelledToolCallIds.delete(event.toolCallId);
         return;
       }
+      if (active.failedToolCallIds?.has(event.toolCallId)) {
+        active.failedToolCallIds.delete(event.toolCallId);
+        return;
+      }
 
       const toolCall = active.toolCalls.get(event.toolCallId);
       const args = toolCall?.args || {};
@@ -909,23 +956,44 @@ class PiSdkSessionManager {
     }
 
     if (event.type === 'compaction_start') {
-      this.emit({ type: 'status', message: `Compacting context (${event.reason})…`, sessionId });
+      const message = `Compacting context (${event.reason})…`;
+      this.setRuntimeStatus(active, 'compacting', message);
+      this.emit({ type: 'status', message, sessionId });
+      this.emitMetricsChanged(active);
+      this.emitSessionsChanged();
       return;
     }
 
     if (event.type === 'compaction_end') {
-      this.emit({ type: 'status', message: event.errorMessage || 'Context compacted', sessionId });
+      const message = event.errorMessage || 'Context compacted';
+      this.setRuntimeStatus(active, event.errorMessage ? 'error' : 'idle', message);
+      this.emit({ type: 'status', message, sessionId });
+      this.emitMetricsChanged(active);
+      this.emitSessionsChanged();
       return;
     }
 
     if (event.type === 'auto_retry_start') {
-      this.emit({ type: 'status', message: `Retrying model request (${event.attempt}/${event.maxAttempts})…`, sessionId });
+      const message = `Retrying model request (${event.attempt}/${event.maxAttempts})…`;
+      this.setRuntimeStatus(active, 'retrying', message);
+      this.emit({ type: 'status', message, sessionId });
+      this.emitMetricsChanged(active);
+      this.emitSessionsChanged();
       return;
     }
 
     if (event.type === 'agent_end') {
-      const message = active.cancelRequested ? 'Cancelled' : (event.willRetry ? 'Retrying…' : 'Done');
+      const hadError = active.statusState === 'error';
+      const message = active.cancelRequested
+        ? 'Cancelled'
+        : event.willRetry
+          ? 'Retrying…'
+          : hadError
+            ? errorStatusMessage(active.statusMessage || 'Run failed')
+            : 'Done';
+      this.setRuntimeStatus(active, active.cancelRequested ? 'cancelled' : event.willRetry ? 'retrying' : hadError ? 'error' : 'idle', message);
       this.emit({ type: 'status', message, sessionId });
+      this.emitMetricsChanged(active);
       this.emitSessionsChanged();
       return;
     }
@@ -933,6 +1001,79 @@ class PiSdkSessionManager {
     if (event.type === 'thinking_level_changed' || event.type === 'session_info_changed') {
       this.emitSessionsChanged();
     }
+  }
+
+  setRuntimeStatus(active, state, message) {
+    if (!active) return;
+    active.statusState = state || 'idle';
+    active.statusMessage = message || '';
+    active.statusUpdatedAt = new Date().toISOString();
+  }
+
+  emitMetricsChanged(active) {
+    if (!active) return;
+    this.emit({
+      type: 'session:metrics',
+      sessionId: active.id,
+      metrics: this.runtimeMetrics(active),
+      session: this.runtimeSummary(active)
+    });
+  }
+
+  continuationDiagnostics(active, error) {
+    const session = active?.session;
+    const messages = Array.isArray(session?.messages) ? session.messages : [];
+    const settings = this.getSettings() || {};
+    const stats = callSafely(() => session?.getSessionStats?.()) || null;
+    const contextUsage = callSafely(() => session?.getContextUsage?.()) || stats?.contextUsage || null;
+    const steering = callSafely(() => session?.getSteeringMessages?.()) || [];
+    const followUp = callSafely(() => session?.getFollowUpMessages?.()) || [];
+
+    return {
+      sessionId: active?.id || '',
+      sessionFile: active?.sessionFile || session?.sessionFile || '',
+      cwd: active?.cwd || '',
+      error: error?.message || String(error),
+      runtime: {
+        runInProgress: !!active?.runInProgress,
+        isStreaming: !!session?.isStreaming,
+        isCompacting: !!session?.isCompacting,
+        cancelRequested: !!active?.cancelRequested,
+        emptyResponseRetried: !!active?.emptyResponseRetried,
+        statusState: active?.statusState || runtimeStatus(active),
+        statusMessage: active?.statusMessage || '',
+        initialPromptChars: String(active?.initialPromptText || '').length
+      },
+      queues: {
+        steering: Array.isArray(steering) ? steering.length : 0,
+        followUp: Array.isArray(followUp) ? followUp.length : 0
+      },
+      toolCalls: {
+        pending: active?.toolCalls?.size || 0,
+        cancelled: active?.cancelledToolCallIds?.size || 0,
+        failed: active?.failedToolCallIds?.size || 0,
+        pendingNames: [...(active?.toolCalls?.values?.() || [])].map((toolCall) => toolCall?.name || 'tool').slice(-20)
+      },
+      messages: {
+        total: messages.length,
+        lastRoles: messages.slice(-12).map(messageDiagnostic),
+        lastAssistant: messageDiagnostic(findLastAssistantMessage(messages))
+      },
+      stats: stats ? {
+        totalMessages: stats.totalMessages,
+        userMessages: stats.userMessages,
+        assistantMessages: stats.assistantMessages,
+        toolCalls: stats.toolCalls,
+        toolResults: stats.toolResults,
+        tokens: stats.tokens,
+        contextUsage
+      } : { contextUsage },
+      settings: {
+        model: String(settings.model || ''),
+        compatibilityPreset: normalizeCompatibilityPreset(settings.compatibilityPreset),
+        compaction: normalizeCompactionSettings(settings.compaction)
+      }
+    };
   }
 
   emitSkillUsed(active, skill) {
@@ -1014,7 +1155,8 @@ class PiSdkSessionManager {
       updatedAt: new Date().toISOString(),
       sessionFile: runtime.sessionFile,
       messageCount: runtime.session.messages.length,
-      busy: !!(runtime.session.isStreaming || runtime.runInProgress)
+      busy: !!(runtime.session.isStreaming || runtime.runInProgress),
+      metrics: this.runtimeMetrics(runtime)
     };
   }
 
@@ -1034,12 +1176,26 @@ class PiSdkSessionManager {
       updatedAt: info.modified instanceof Date ? info.modified.toISOString() : new Date(info.modified || Date.now()).toISOString(),
       sessionFile: runtime?.sessionFile || info.path,
       messageCount: runtime?.session?.messages?.length ?? info.messageCount ?? 0,
-      busy: !!(runtime?.session?.isStreaming || runtime?.runInProgress)
+      busy: !!(runtime?.session?.isStreaming || runtime?.runInProgress),
+      metrics: runtime ? this.runtimeMetrics(runtime) : metricsFromSessionFile(info.path, {
+        state: 'idle',
+        message: 'Ready',
+        compaction: normalizeCompactionSettings(this.getSettings()?.compaction)
+      })
     };
   }
 
+  runtimeMetrics(runtime) {
+    return metricsFromAgentSession(runtime?.session, {
+      state: runtime?.statusState || runtimeStatus(runtime),
+      message: runtime?.statusMessage || runtimeStatus(runtime),
+      updatedAt: runtime?.statusUpdatedAt,
+      compaction: normalizeCompactionSettings(this.getSettings()?.compaction)
+    });
+  }
+
   getRendererMessages(runtime = this.active) {
-    return (runtime?.session?.messages || []).map(toRendererMessage).filter(Boolean);
+    return toRendererMessages(runtime?.session?.messages || []);
   }
 
   getActiveRendererMessages() {
@@ -1147,7 +1303,8 @@ class PiSdkSessionManager {
 function runtimeStatus(runtime) {
   if (!runtime) return 'idle';
   if (runtime.session?.isStreaming || runtime.runInProgress) return 'running';
-  if (runtime.cancelRequested) return 'cancelled';
+  if (runtime.cancelRequested || runtime.statusState === 'cancelled') return 'cancelled';
+  if (runtime.statusState === 'error') return 'error';
   return 'idle';
 }
 
@@ -1157,7 +1314,7 @@ function makeProviderModel(modelId, compatibilityPreset = 'openai') {
     id: modelId,
     name: modelId,
     api: 'openai-completions',
-    input: ['text', 'image'],
+    input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: DEFAULT_CONTEXT_WINDOW,
     maxTokens: DEFAULT_MAX_TOKENS
@@ -1181,12 +1338,17 @@ function makeProviderModel(modelId, compatibilityPreset = 'openai') {
     ...base,
     reasoning: true,
     compat: {
+      // Custom OpenAI-compatible endpoints such as vLLM commonly reject OpenAI-only
+      // chat-completions fields/roles. Keep the "OpenAI-compatible" preset capable
+      // of tools/reasoning, but use portable system-role prompts and omit store.
+      supportsStore: false,
+      supportsDeveloperRole: false,
       supportsUsageInStreaming: true,
       supportsStrictMode: true,
       supportsReasoningEffort: true,
-      ...(isQwenModelId(modelId) ? { thinkingFormat: 'qwen' } : {}),
+      ...(isQwenModelId(modelId) ? { thinkingFormat: 'qwen-chat-template' } : {}),
       maxTokensField: 'max_completion_tokens',
-      sendSessionAffinityHeaders: true
+      sendSessionAffinityHeaders: false
     }
   };
 }
@@ -1229,6 +1391,23 @@ function isStopCommandText(text) {
   return new Set(['/stop', 'stop', '/abort', 'abort', '/cancel', 'cancel', 'esc', 'escape']).has(normalized);
 }
 
+function cleanErrorMessage(error) {
+  const message = error?.message || String(error || 'Unknown error');
+  return message
+    .replace(/^Error invoking remote method '[^']+': Error:\s*/, '')
+    .replace(/^Error:\s*/, '')
+    .trim() || 'Unknown error';
+}
+
+function isCancellationError(error) {
+  return /\b(abort(?:ed)?|cancelled|canceled)\b/i.test(cleanErrorMessage(error));
+}
+
+function errorStatusMessage(message) {
+  const text = cleanErrorMessage(message);
+  return /^error\b/i.test(text) ? text : `Error: ${text}`;
+}
+
 function toPiThinkingLevel(value, fallback = 'none') {
   const raw = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
   if (!raw) return toPiThinkingLevel(fallback, 'none');
@@ -1263,17 +1442,64 @@ function formatGuardrailBlockedMessage(command, decision = {}) {
   ].filter((line) => line !== '').join('\n');
 }
 
-function toRendererMessage(message) {
-  if (!message) return null;
-  if (message.role === 'user') {
-    const content = messageText(message);
-    return content === EMPTY_RESPONSE_RETRY_PROMPT ? null : { role: 'user', content };
+function toRendererMessages(messages = []) {
+  const rendered = [];
+  let activeAssistant = null;
+
+  const ensureAssistant = () => {
+    if (activeAssistant && activeAssistant.role === 'assistant') return activeAssistant;
+    activeAssistant = { role: 'assistant', content: '', thinking: '', tools: [] };
+    rendered.push(activeAssistant);
+    return activeAssistant;
+  };
+
+  for (const message of messages || []) {
+    if (!message) continue;
+
+    if (message.role === 'user') {
+      const content = messageText(message);
+      if (content && content !== EMPTY_RESPONSE_RETRY_PROMPT) {
+        rendered.push({ role: 'user', content });
+        activeAssistant = null;
+      }
+      continue;
+    }
+
+    if (message.role === 'assistant') {
+      const content = messageText(message);
+      const thinking = messageThinking(message);
+      const tools = messageToolCalls(message);
+      if (!content && !thinking && tools.length === 0 && !message.errorMessage) continue;
+
+      const assistant = ensureAssistant();
+      if (thinking) assistant.thinking = appendText(assistant.thinking, thinking, '\n\n');
+      if (content) assistant.content = appendText(assistant.content, content, '\n\n');
+      if (message.errorMessage) assistant.error = message.errorMessage;
+      for (const tool of tools) upsertRendererTool(assistant, tool);
+      continue;
+    }
+
+    if (message.role === 'toolResult') {
+      const assistant = ensureAssistant();
+      const tool = rendererToolFromResultMessage(message);
+      upsertRendererTool(assistant, tool);
+      continue;
+    }
+
+    const standalone = toStandaloneRendererMessage(message);
+    if (standalone) {
+      rendered.push(standalone);
+      activeAssistant = null;
+    }
   }
-  if (message.role === 'assistant') {
-    const content = messageText(message);
-    const thinking = messageThinking(message);
-    return content || thinking ? { role: 'assistant', content, thinking } : null;
-  }
+
+  return rendered.filter((message) => {
+    if (message.role !== 'assistant') return true;
+    return String(message.content || message.thinking || message.error || '').trim() || (message.tools || []).length > 0;
+  });
+}
+
+function toStandaloneRendererMessage(message) {
   if (message.role === 'bashExecution') {
     return {
       role: 'assistant',
@@ -1283,6 +1509,66 @@ function toRendererMessage(message) {
   if (message.role === 'compactionSummary') return { role: 'assistant', content: `Context compacted:\n\n${message.summary || ''}` };
   if (message.role === 'branchSummary') return { role: 'assistant', content: `Branch summary:\n\n${message.summary || ''}` };
   return null;
+}
+
+function appendText(previous, next, separator = '') {
+  const left = String(previous || '').trim();
+  const right = String(next || '').trim();
+  if (!left) return right;
+  if (!right) return left;
+  return `${left}${separator}${right}`;
+}
+
+function messageToolCalls(message) {
+  const content = message?.content;
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((part) => part?.type === 'toolCall')
+    .map((part) => ({
+      id: String(part.id || part.toolCallId || ''),
+      name: String(part.name || part.toolName || 'tool'),
+      args: normalizeToolArgs(part.arguments ?? part.args ?? part.input),
+      status: 'pending'
+    }))
+    .filter((tool) => tool.id || tool.name);
+}
+
+function rendererToolFromResultMessage(message) {
+  const name = String(message.toolName || '').trim();
+  return {
+    id: String(message.toolCallId || ''),
+    name: name || 'tool',
+    args: {},
+    status: message.isError ? 'error' : 'ok',
+    result: summarizePiToolResult(name || 'tool', { content: message.content, details: message.details }, !message.isError)
+  };
+}
+
+function upsertRendererTool(assistant, tool) {
+  if (!assistant || !tool) return;
+  if (!Array.isArray(assistant.tools)) assistant.tools = [];
+  const existing = tool.id ? assistant.tools.find((entry) => entry.id === tool.id) : null;
+  if (existing) {
+    if (tool.name && tool.name !== 'tool') existing.name = tool.name;
+    existing.args = Object.keys(tool.args || {}).length ? tool.args : existing.args || {};
+    existing.status = tool.status || existing.status;
+    existing.result = tool.result || existing.result;
+    return;
+  }
+  assistant.tools.push(tool);
+}
+
+function normalizeToolArgs(value) {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
 function parseSkillBlock(text) {
@@ -1331,6 +1617,52 @@ function messageThinking(message) {
     .map((part) => part.redacted ? '[thinking redacted by provider]' : (part.thinking || ''))
     .join('\n\n')
     .trim();
+}
+
+function isCannotContinueFromAssistantError(error) {
+  return /Cannot continue from message role:\s*assistant/i.test(error?.message || String(error));
+}
+
+function messageDiagnostic(message) {
+  if (!message) return null;
+  const content = message.content;
+  const contentTypes = Array.isArray(content)
+    ? content.map((part) => part?.type || typeof part).slice(0, 20)
+    : [typeof content];
+  const toolCalls = Array.isArray(content)
+    ? content.filter((part) => part?.type === 'toolCall').map((part) => part.name || 'tool').slice(0, 20)
+    : [];
+
+  return {
+    role: message.role || '',
+    timestamp: message.timestamp || '',
+    stopReason: message.stopReason || '',
+    errorMessage: message.errorMessage || '',
+    textChars: messageText(message).length,
+    thinkingChars: messageThinking(message).length,
+    contentTypes,
+    toolCalls,
+    toolCallId: message.toolCallId || '',
+    toolName: message.toolName || '',
+    usageTotal: messageUsageTotal(message.usage)
+  };
+}
+
+function messageUsageTotal(usage = {}) {
+  const total = Number(usage.totalTokens ?? usage.total);
+  if (Number.isFinite(total)) return Math.max(0, Math.round(total));
+  return ['input', 'output', 'cacheRead', 'cacheWrite'].reduce((sum, key) => {
+    const value = Number(usage[key]);
+    return sum + (Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0);
+  }, 0);
+}
+
+function callSafely(fn) {
+  try {
+    return fn();
+  } catch {
+    return undefined;
+  }
 }
 
 function getActiveLastAssistantText(active) {

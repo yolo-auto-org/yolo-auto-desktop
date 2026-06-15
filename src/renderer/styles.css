@@ -332,11 +332,16 @@ button {
 }
 
 .session-item-time,
-.session-item-workspace {
+.session-item-workspace,
+.session-item-usage {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.session-item-usage {
+  font-family: "SF Mono", "Cascadia Code", ui-monospace, monospace;
 }
 
 .session-item-time {
@@ -572,6 +577,29 @@ button {
 .return-to-bottom:hover {
   transform: translateY(-1px);
   background: var(--primary-hover);
+}
+
+.history-pager-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto 18px;
+}
+
+.history-pager {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--soft-bg);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.history-pager:hover {
+  border-color: rgba(var(--accent-rgb), 0.5);
+  color: var(--text);
+  background: var(--soft-bg-2);
 }
 
 .welcome-card {
@@ -850,6 +878,35 @@ button {
   color: var(--muted-2);
 }
 
+.message-truncation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--soft-border);
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.message-truncation button {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--soft-bg);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.message-truncation button:hover {
+  border-color: rgba(var(--accent-rgb), 0.5);
+  background: var(--soft-bg-2);
+}
+
 .message.assistant.has-thinking .content:empty::before,
 .message.assistant.has-activity .content:empty::before {
   content: "";
@@ -909,6 +966,14 @@ button {
 }
 
 .error-text {
+  color: var(--red);
+}
+
+.message.assistant.has-error .bubble {
+  border-color: rgba(var(--red-rgb), 0.28);
+}
+
+.message.assistant.has-error .content {
   color: var(--red);
 }
 
@@ -1378,6 +1443,30 @@ button {
 
 .composer-hint .status-text {
   max-width: min(420px, 45vw);
+}
+
+.session-metrics {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: min(420px, 42vw);
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--muted-2);
+  font-family: "SF Mono", "Cascadia Code", ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.session-metrics span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-metrics span + span::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--muted-2);
 }
 
 .composer-hint .link-button {
