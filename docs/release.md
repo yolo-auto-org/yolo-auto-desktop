@@ -91,15 +91,15 @@ Packaged builds use `electron-updater` with the public GitHub Releases provider 
 
 The app checks on startup, then every 6 hours. When an update is downloaded, it prompts the user to restart and install. Settings → Logs includes a manual **Check for updates** button.
 
-## Free / unsigned one-click path
+## Free / unsigned or ad-hoc-signed path
 
 You can publish installers without paid Apple/Microsoft signing.
 
 - Windows: `YOLO-Auto-Desktop-Setup-<version>-x64.exe` is a real one-click NSIS installer. Users will see Windows SmartScreen / unknown publisher warnings until you code-sign.
-- macOS: unsigned `.dmg` / `.zip` artifacts can be built, but this is **not truly one-click** for downloaded apps. Users usually need right-click → Open, or remove quarantine manually. True one-click macOS distribution and reliable auto-update require paid Apple Developer ID signing + notarization.
+- macOS: free builds are ad-hoc signed so Electron's modified binaries have internally valid page signatures, but they are still not Apple-trusted or notarized. This is **not truly one-click** for downloaded apps. Users usually need right-click → Open, or remove quarantine manually. True one-click macOS distribution and reliable auto-update require paid Apple Developer ID signing + notarization.
 - Linux: AppImage/deb/rpm are usable without paid signing. Some distros may still warn.
 
-By default the GitHub release workflow builds unsigned artifacts if signing secrets are absent. Set these repository variables only when you want to enforce paid signing:
+By default the GitHub release workflow builds unpaid/free artifacts if signing secrets are absent: Windows remains unsigned, while macOS is ad-hoc signed but not notarized. Set these repository variables only when you want to enforce paid signing:
 
 - `REQUIRE_WINDOWS_SIGNING=true`
 - `REQUIRE_MAC_SIGNING=true`

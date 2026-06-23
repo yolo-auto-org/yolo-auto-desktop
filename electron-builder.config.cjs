@@ -100,9 +100,12 @@ module.exports = {
       { target: 'zip', arch: ['x64', 'arm64'] }
     ],
     icon: 'build/icon.icns',
-    // If you do not have a paid Apple Developer ID cert, this intentionally emits
-    // unsigned macOS artifacts. Gatekeeper will require right-click → Open.
-    identity: hasMacSigning() ? undefined : null,
+    // If you do not have a paid Apple Developer ID cert, still ad-hoc sign (`-`)
+    // instead of skipping signing entirely. Electron fuses modify executable pages;
+    // without re-signing, newer macOS releases can kill the app with
+    // CODESIGNING Code 2 / Invalid Page. Ad-hoc builds are still not notarized,
+    // so Gatekeeper bypass steps remain necessary for downloaded tester builds.
+    identity: hasMacSigning() ? undefined : '-',
     hardenedRuntime: hasMacSigning(),
     gatekeeperAssess: false,
     entitlements: 'config/entitlements.mac.plist',
