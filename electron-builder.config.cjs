@@ -8,6 +8,21 @@ function env(name) {
   return String(process.env[name] || '').trim();
 }
 
+function firstEnv(...names) {
+  for (const name of names) {
+    const value = env(name);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+// GitHub Actions exposes missing secrets as empty environment variables. electron-builder
+// treats an empty CSC_LINK as a path and then fails with "not a file" before it can
+// fall back to ad-hoc macOS signing, so remove empty signing vars up front.
+for (const name of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'CSC_INSTALLER_LINK', 'CSC_INSTALLER_KEY_PASSWORD']) {
+  if (!env(name)) delete process.env[name];
+}
+
 function enabled(name) {
   return ['1', 'true', 'yes', 'on'].includes(env(name).toLowerCase());
 }
@@ -100,6 +115,8 @@ module.exports = {
       { target: 'zip', arch: ['x64', 'arm64'] }
     ],
     icon: 'build/icon.icns',
+    cscLink: firstEnv('CSC_LINK', 'MACOS_CSC_LINK'),
+    cscKeyPassword: firstEnv('CSC_KEY_PASSWORD', 'MACOS_CSC_KEY_PASSWORD'),
     // If you do not have a paid Apple Developer ID cert, still ad-hoc sign (`-`)
     // instead of skipping signing entirely. Electron fuses modify executable pages;
     // without re-signing, newer macOS releases can kill the app with
