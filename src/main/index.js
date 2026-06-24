@@ -1,3 +1,5 @@
+installSafeConsoleGuards();
+
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -36,6 +38,35 @@ let workspaceRoot = '';
 let activeSessionId = '';
 let sessionManager;
 let logger = () => {};
+
+function installSafeConsoleGuards() {
+  for (const method of ['log', 'info', 'warn', 'error']) {
+    const original = console[method]?.bind(console);
+    if (typeof original !== 'function') continue;
+
+    console[method] = (...args) => {
+      try {
+        original(...args);
+      } catch (error) {
+        if (!isBrokenPipeError(error)) throw error;
+      }
+    };
+  }
+
+  for (const stream of [process.stdout, process.stderr]) {
+    if (!stream || typeof stream.on !== 'function') continue;
+    stream.on('error', (error) => {
+      if (isBrokenPipeError(error)) return;
+      process.nextTick(() => {
+        throw error;
+      });
+    });
+  }
+}
+
+function isBrokenPipeError(error) {
+  return error?.code === 'EPIPE';
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({

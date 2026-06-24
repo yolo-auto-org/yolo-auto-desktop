@@ -25,7 +25,15 @@ function setupAutoUpdates(options = {}) {
   getMainWindow = typeof options.getMainWindow === 'function' ? options.getMainWindow : () => null;
   updateEvents = typeof options.emit === 'function' ? options.emit : () => {};
 
+  if (!updatesEnabled()) {
+    const reason = getUpdatesDisabledReason();
+    setStatus(reason === 'not packaged' ? 'development' : 'disabled', getUpdatesDisabledMessage(reason), { checking: false, reason });
+    log('info', 'updates:disabled', { reason, packaged: app.isPackaged });
+    return lastStatus;
+  }
+
   const autoUpdater = getAutoUpdater();
+  autoUpdater.logger = createUpdaterLogger();
   const feedConfig = getGitHubFeedConfig();
   autoUpdater.setFeedURL(feedConfig);
   autoUpdater.autoDownload = true;
@@ -75,16 +83,6 @@ function setupAutoUpdates(options = {}) {
     log('warn', 'updates:error', { error: error?.stack || error?.message || String(error) });
   });
 
-  if (!updatesEnabled()) {
-    const reason = app.isPackaged ? 'disabled by environment' : 'not packaged';
-    const message = app.isPackaged
-      ? 'Automatic updates are disabled by environment.'
-      : 'Automatic updates run only in packaged builds.';
-    setStatus(app.isPackaged ? 'disabled' : 'development', message, { checking: false, reason });
-    log('info', 'updates:disabled', { reason, packaged: app.isPackaged });
-    return lastStatus;
-  }
-
   setTimeout(() => {
     checkForUpdates('startup').catch((error) => {
       log('warn', 'updates:startup-check-failed', { error: error?.message || String(error) });
@@ -107,10 +105,11 @@ async function checkForUpdates(reason = 'manual') {
   }
 
   if (!updatesEnabled()) {
-    const message = app.isPackaged
-      ? 'Automatic updates are disabled by environment.'
-      : 'Automatic updates run only in packaged builds.';
-    setStatus(app.isPackaged ? 'disabled' : 'development', message, { checking: false, reason });
+    const disabledReason = getUpdatesDisabledReason();
+    setStatus(disabledReason === 'not packaged' ? 'development' : 'disabled', getUpdatesDisabledMessage(disabledReason), {
+      checking: false,
+      reason: disabledReason || reason
+    });
     return { ok: true, skipped: true, status: lastStatus };
   }
 
@@ -136,8 +135,26 @@ function getUpdateStatus() {
 }
 
 function updatesEnabled() {
+  if (isAgentMode()) return false;
   if (isEnvEnabled('YOLO_AUTO_DISABLE_UPDATES')) return false;
   return app.isPackaged || isEnvEnabled('YOLO_AUTO_FORCE_UPDATES');
+}
+
+function isAgentMode() {
+  return isEnvEnabled('YOLO_AUTO_AGENT') || isEnvEnabled('CUA');
+}
+
+function getUpdatesDisabledReason() {
+  if (isAgentMode()) return 'agent mode';
+  if (isEnvEnabled('YOLO_AUTO_DISABLE_UPDATES')) return 'disabled by environment';
+  if (!app.isPackaged && !isEnvEnabled('YOLO_AUTO_FORCE_UPDATES')) return 'not packaged';
+  return 'disabled';
+}
+
+function getUpdatesDisabledMessage(reason) {
+  if (reason === 'agent mode') return 'Automatic updates are disabled in agent mode.';
+  if (reason === 'not packaged') return 'Automatic updates run only in packaged builds.';
+  return 'Automatic updates are disabled by environment.';
 }
 
 function getAutoUpdater() {
@@ -145,6 +162,37 @@ function getAutoUpdater() {
     ({ autoUpdater: updater } = require('electron-updater'));
   }
   return updater;
+}
+
+function createUpdaterLogger() {
+  return {
+    info: (...args) => logUpdaterMessage('info', args),
+    warn: (...args) => logUpdaterMessage('warn', args),
+    error: (...args) => logUpdaterMessage('error', args),
+    debug: (...args) => logUpdaterMessage('info', args)
+  };
+}
+
+function logUpdaterMessage(level, args) {
+  try {
+    log(level, 'updates:updater-log', { message: args.map(formatUpdaterLogArg).join(' ') });
+  } catch {
+    // Updater logging should never affect the app lifecycle.
+  }
+}
+
+function formatUpdaterLogArg(value) {
+  if (value instanceof Error) return value.stack || value.message || String(value);
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
 }
 
 function getGitHubFeedConfig() {
