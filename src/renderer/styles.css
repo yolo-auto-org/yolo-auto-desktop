@@ -2056,6 +2056,91 @@ button {
   text-overflow: ellipsis;
 }
 
+.skills-dirs-summary {
+  display: grid;
+  gap: 6px;
+  margin: -2px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(var(--accent-rgb), 0.18);
+  border-radius: 14px;
+  background: rgba(var(--accent-rgb), 0.06);
+}
+
+.skills-dirs-title {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.skills-dirs-list {
+  display: grid;
+  gap: 4px;
+}
+
+.skills-dirs-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted-2);
+  font-size: 12px;
+}
+
+.skills-dirs-label {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.skills-dirs-entry code {
+  overflow: hidden;
+  font-family: "SF Mono", "Cascadia Code", ui-monospace, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.skill-diagnostic-item {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid rgba(var(--yellow-rgb), 0.34);
+  border-radius: 16px;
+  background: rgba(var(--yellow-rgb), 0.1);
+}
+
+.skill-diagnostic-item.error {
+  border-color: rgba(var(--red-rgb), 0.34);
+  background: rgba(var(--red-rgb), 0.1);
+}
+
+.skill-diagnostic-title {
+  color: var(--yellow);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.skill-diagnostic-item.error .skill-diagnostic-title {
+  color: var(--red);
+}
+
+.skill-diagnostic-meta,
+.skill-diagnostic-fix {
+  overflow: hidden;
+  color: var(--muted-2);
+  font-family: "SF Mono", "Cascadia Code", ui-monospace, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.skill-diagnostic-fix {
+  white-space: normal;
+}
+
 .skill-dirs-field {
   margin-top: 4px;
 }

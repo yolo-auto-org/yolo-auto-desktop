@@ -57,7 +57,7 @@ const state = {
   },
   queues: { steering: [], followUp: [] },
   concurrency: { maxConcurrency: 2, runningCount: 0, runningSessions: [], canStart: true, pendingText: '' },
-  skills: { skills: [], diagnostics: [], extraDirs: [], loading: false, error: '' },
+  skills: { skills: [], diagnostics: [], extraDirs: [], skillDirs: [], loading: false, error: '' },
   filePicker: { open: false, mode: 'file', query: '', results: [], selectedIndex: 0, anchor: null, requestId: 0 },
   sessionBrowser: { query: '', sortKey: 'date', sortDir: 'desc', tab: 'all' },
   sidebarCollapsed: localStorage.getItem('yolo-sidebar-collapsed') === 'true',
@@ -110,6 +110,7 @@ const els = {
   saveSkillDirsBtn: document.getElementById('saveSkillDirsBtn'),
   skillsList: document.getElementById('skillsList'),
   skillsStatus: document.getElementById('skillsStatus'),
+  skillsDirsSummary: document.getElementById('skillsDirsSummary'),
   skillsExtraDirsInput: document.getElementById('skillsExtraDirsInput'),
   toolsList: document.getElementById('toolsList'),
   toolsStatus: document.getElementById('toolsStatus'),
@@ -846,6 +847,7 @@ async function loadSkillsPane() {
       skills: payload.skills || [],
       diagnostics: payload.diagnostics || [],
       extraDirs: payload.extraDirs || [],
+      skillDirs: payload.skillDirs || [],
       loading: false,
       error: ''
     };
@@ -863,11 +865,22 @@ function renderSkillsPane() {
     els.skillsExtraDirsInput.value = (state.skills.extraDirs || []).join('\n');
   }
 
+  renderSkillDirsSummary();
+
+  const skills = state.skills.skills || [];
   const diagnostics = state.skills.diagnostics || [];
+  const skillDirs = state.skills.skillDirs || [];
   if (els.skillsStatus) {
-    if (state.skills.loading) els.skillsStatus.textContent = 'Loading skills…';
-    else if (state.skills.error) els.skillsStatus.textContent = state.skills.error;
-    else els.skillsStatus.textContent = `${state.skills.skills.length} skills available${diagnostics.length ? ` · ${diagnostics.length} notices` : ''}`;
+    if (state.skills.loading) {
+      els.skillsStatus.textContent = 'Loading skills…';
+      els.skillsStatus.title = '';
+    } else if (state.skills.error) {
+      els.skillsStatus.textContent = state.skills.error;
+      els.skillsStatus.title = '';
+    } else {
+      els.skillsStatus.textContent = `${skills.length} skills available${diagnostics.length ? ` · ${diagnostics.length} notices` : ''}${skillDirs.length ? ` · ${skillDirs.length} locations` : ''}`;
+      els.skillsStatus.title = skillDirs.map((entry) => `${entry.label || 'folder'}: ${entry.path}`).join('\n');
+    }
     els.skillsStatus.classList.toggle('error-text', !!state.skills.error);
   }
 
@@ -881,15 +894,87 @@ function renderSkillsPane() {
     return;
   }
 
-  if (!state.skills.skills.length) {
-    els.skillsList.innerHTML = '<div class="sessions-empty">No skills found</div>';
+  els.skillsList.innerHTML = '';
+  for (const diagnostic of diagnostics) {
+    els.skillsList.appendChild(createSkillDiagnosticItem(diagnostic));
+  }
+
+  if (!skills.length) {
+    const empty = document.createElement('div');
+    empty.className = 'sessions-empty';
+    empty.textContent = diagnostics.length ? 'No loadable skills found' : 'No skills found';
+    els.skillsList.appendChild(empty);
     return;
   }
 
-  els.skillsList.innerHTML = '';
-  for (const skill of state.skills.skills) {
+  for (const skill of skills) {
     els.skillsList.appendChild(createSkillManageItem(skill));
   }
+}
+
+function renderSkillDirsSummary() {
+  if (!els.skillsDirsSummary) return;
+  const skillDirs = state.skills.skillDirs || [];
+  els.skillsDirsSummary.innerHTML = '';
+  els.skillsDirsSummary.classList.toggle('hidden', skillDirs.length === 0);
+  if (!skillDirs.length) return;
+
+  const title = document.createElement('div');
+  title.className = 'skills-dirs-title';
+  title.textContent = 'Skill search locations';
+
+  const list = document.createElement('div');
+  list.className = 'skills-dirs-list';
+  for (const entry of skillDirs) {
+    const row = document.createElement('div');
+    row.className = 'skills-dirs-entry';
+
+    const label = document.createElement('span');
+    label.className = 'skills-dirs-label';
+    label.textContent = entry.label || 'Folder';
+
+    const pathText = document.createElement('code');
+    pathText.textContent = entry.path || '';
+    if (entry.path) row.title = entry.path;
+
+    row.appendChild(label);
+    row.appendChild(pathText);
+    list.appendChild(row);
+  }
+
+  els.skillsDirsSummary.appendChild(title);
+  els.skillsDirsSummary.appendChild(list);
+}
+
+function createSkillDiagnosticItem(diagnostic) {
+  const item = document.createElement('div');
+  item.className = `skill-diagnostic-item ${String(diagnostic?.type || 'warning').toLowerCase()}`;
+
+  const title = document.createElement('div');
+  title.className = 'skill-diagnostic-title';
+  title.textContent = `${formatDiagnosticType(diagnostic?.type)}: ${diagnostic?.message || 'Skill notice'}`;
+
+  const meta = document.createElement('div');
+  meta.className = 'skill-diagnostic-meta';
+  meta.textContent = diagnostic?.path || diagnostic?.location || '';
+  if (meta.textContent) meta.title = meta.textContent;
+
+  item.appendChild(title);
+  if (meta.textContent) item.appendChild(meta);
+
+  if (diagnostic?.code === 'skill-frontmatter-missing-opening-delimiter') {
+    const fix = document.createElement('div');
+    fix.className = 'skill-diagnostic-fix';
+    fix.textContent = 'Fix: add a line containing --- before name: and keep the existing closing --- after the frontmatter block.';
+    item.appendChild(fix);
+  }
+
+  return item;
+}
+
+function formatDiagnosticType(type) {
+  const text = String(type || 'warning').trim();
+  return text ? text[0].toUpperCase() + text.slice(1) : 'Warning';
 }
 
 function createSkillManageItem(skill) {
@@ -942,6 +1027,7 @@ async function setSkillEnabled(skillName, enabled) {
       skills: payload.skills || [],
       diagnostics: payload.diagnostics || [],
       extraDirs: payload.extraDirs || [],
+      skillDirs: payload.skillDirs || [],
       loading: false,
       error: ''
     };
@@ -965,6 +1051,7 @@ async function saveSkillDirs() {
       skills: payload.skills || [],
       diagnostics: payload.diagnostics || [],
       extraDirs: payload.extraDirs || [],
+      skillDirs: payload.skillDirs || [],
       loading: false,
       error: ''
     };

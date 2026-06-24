@@ -1,9 +1,10 @@
 const fs = require('node:fs/promises');
 const fssync = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { getAppIcon } = require('./app-icon');
 const { shouldAskCommandApproval } = require('./command-guardrails');
-const { normalizeCompactionSettings, normalizeMaxConcurrency } = require('./settings');
+const { normalizeCompactionSettings, normalizeMaxConcurrency, normalizeModelId } = require('./settings');
 const { metricsFromAgentSession, metricsFromSessionFile, formatSessionMetrics } = require('./session-metrics');
 
 const PI_PROVIDER = 'yolo-openai-compatible';
@@ -150,11 +151,11 @@ class PiSdkSessionManager {
     const settings = this.getSettings() || {};
     const loader = active.session.resourceLoader;
     const loadedResult = loader?.getSkills?.() || { skills: [], diagnostics: [] };
+    const skillPaths = Array.isArray(loader?.lastSkillPaths) ? loader.lastSkillPaths : [];
     let result = loadedResult;
 
     try {
       const sdk = await this.sdk();
-      const skillPaths = Array.isArray(loader?.lastSkillPaths) ? loader.lastSkillPaths : [];
       if (typeof sdk.loadSkills === 'function' && skillPaths.length > 0) {
         result = sdk.loadSkills({
           cwd: active.cwd,
@@ -172,11 +173,17 @@ class PiSdkSessionManager {
     const skills = (result.skills || [])
       .map((skill) => this.skillToSummary(loadedByPath.get(skill.filePath) || loadedByName.get(skill.name) || skill, settings))
       .sort((a, b) => a.name.localeCompare(b.name));
+    const skillDirs = getSkillDirectorySummaries(settings, active.cwd, this.agentDir, skillPaths);
+    const diagnostics = mergeSkillDiagnostics(
+      result.diagnostics || loadedResult.diagnostics || [],
+      collectSkillFrontmatterDiagnostics(skillDirs.map((entry) => entry.path), active.cwd)
+    );
 
     return {
       skills,
-      diagnostics: result.diagnostics || loadedResult.diagnostics || [],
-      extraDirs: getExtraSkillDirs(settings)
+      diagnostics,
+      extraDirs: getExtraSkillDirs(settings),
+      skillDirs
     };
   }
 
@@ -590,7 +597,7 @@ class PiSdkSessionManager {
     const settings = this.getSettings() || {};
     const apiBaseUrl = String(settings.apiBaseUrl || DEFAULT_BASE_URL).trim() || DEFAULT_BASE_URL;
     const apiKey = String(settings.apiKey || '').trim();
-    const modelId = String(settings.model || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+    const modelId = normalizeModelId(settings.model, DEFAULT_MODEL);
     const compatibilityPreset = normalizeCompatibilityPreset(settings.compatibilityPreset);
     const compaction = normalizeCompactionSettings(settings.compaction);
     const piThinkingLevel = compatibilityPreset === 'local-basic'
@@ -644,7 +651,7 @@ class PiSdkSessionManager {
       agentsFilesOverride: (base) => this.appendSoulContext(base, cwd),
       appendSystemPromptOverride: (base) => [
         ...base,
-        'You are running inside YOLO Auto Desktop. Use the enabled Pi coding-agent tools for software work. Be production-minded: inspect before editing, prefer exact patches, run relevant checks, explain changes concisely, and ask before destructive actions. The app may require approval before extremely dangerous shell commands unless AI Guardrails are set to YOLO mode.'
+        buildYoloDesktopSystemPrompt(settings, cwd, this.agentDir)
       ]
     });
     await resourceLoader.reload();
@@ -2569,6 +2576,225 @@ function getExtraSkillDirs(settings = {}) {
   return (settings?.skills?.load?.extraDirs || [])
     .map((entry) => String(entry || '').trim())
     .filter(Boolean);
+}
+
+const SKILL_FRONTMATTER_MISSING_OPEN_CODE = 'skill-frontmatter-missing-opening-delimiter';
+const SKILL_FRONTMATTER_MISSING_CLOSE_CODE = 'skill-frontmatter-missing-closing-delimiter';
+const MAX_SKILL_DIAGNOSTIC_FILES = 500;
+const MAX_SKILL_DIAGNOSTIC_DEPTH = 12;
+
+function buildYoloDesktopSystemPrompt(settings = {}, cwd = '', agentDir = '') {
+  const lines = [
+    'You are running inside YOLO Auto Desktop. Use the enabled Pi coding-agent tools for software work. Be production-minded: inspect before editing, prefer exact patches, run relevant checks, explain changes concisely, and ask before destructive actions. The app may require approval before extremely dangerous shell commands unless AI Guardrails are set to YOLO mode.'
+  ];
+
+  const skillDirs = getSkillDirectorySummaries(settings, cwd, agentDir);
+  const preferredInstallDir = getPreferredSkillInstallDir(settings, cwd, agentDir);
+  if (preferredInstallDir || skillDirs.length > 0) {
+    lines.push('', 'YOLO Auto skill installation context:');
+    if (preferredInstallDir) lines.push(`- Preferred skill install folder: ${preferredInstallDir}`);
+    if (skillDirs.length > 0) {
+      lines.push('- Skill search folders/resources:');
+      for (const entry of skillDirs) lines.push(`  - ${entry.label}: ${entry.path}`);
+    }
+    lines.push('- Install each skill as <folder>/<skill-name>/SKILL.md unless the user specifies a different search folder.');
+    lines.push('- SKILL.md frontmatter must start with an opening --- line and end with a closing --- line; name and description are required.');
+    lines.push('- When installing or moving a skill, mention the target path you will use and confirm the final path after writing files.');
+  }
+
+  return lines.join('\n');
+}
+
+function getPreferredSkillInstallDir(settings = {}, cwd = '', agentDir = '') {
+  const extraDirs = getExtraSkillDirs(settings);
+  const preferred = extraDirs[0] || (agentDir ? path.join(agentDir, 'skills') : '');
+  return resolveSessionPath(preferred, cwd);
+}
+
+function getSkillDirectorySummaries(settings = {}, cwd = '', agentDir = '', loadedPaths = []) {
+  const summaries = [];
+  const byPath = new Map();
+  const add = (label, value, kind = 'resource') => {
+    const resolved = resolveSessionPath(value, cwd);
+    if (!resolved) return;
+    const key = pathKey(resolved);
+    const existing = byPath.get(key);
+    if (existing) {
+      if (!existing.labels.includes(label)) existing.labels.push(label);
+      if (!existing.kinds.includes(kind)) existing.kinds.push(kind);
+      existing.label = existing.labels.join(', ');
+      existing.kind = existing.kinds.join(', ');
+      return;
+    }
+    const entry = { label, path: resolved, kind, labels: [label], kinds: [kind] };
+    summaries.push(entry);
+    byPath.set(key, entry);
+  };
+
+  if (agentDir) add('YOLO Auto home', path.join(agentDir, 'skills'), 'home');
+  if (cwd) add('Project .pi skills', path.join(cwd, '.pi', 'skills'), 'project');
+  for (const extraDir of getExtraSkillDirs(settings)) add('Extra folder', extraDir, 'extra');
+  for (const loadedPath of Array.isArray(loadedPaths) ? loadedPaths : []) add('Loaded resource', loadedPath, 'resource');
+
+  return summaries.map(({ labels, kinds, ...entry }) => entry);
+}
+
+function collectSkillFrontmatterDiagnostics(searchPaths = [], cwd = '') {
+  const files = new Set();
+  const seenDirs = new Set();
+  for (const rawPath of Array.isArray(searchPaths) ? searchPaths : []) {
+    scanSkillMarkdownFiles(resolveSessionPath(rawPath, cwd), files, seenDirs, 0);
+    if (files.size >= MAX_SKILL_DIAGNOSTIC_FILES) break;
+  }
+
+  const diagnostics = [];
+  for (const filePath of files) {
+    const diagnostic = inspectSkillFrontmatter(filePath);
+    if (diagnostic) diagnostics.push(diagnostic);
+  }
+  return diagnostics;
+}
+
+function scanSkillMarkdownFiles(targetPath, files, seenDirs, depth) {
+  if (!targetPath || files.size >= MAX_SKILL_DIAGNOSTIC_FILES || depth > MAX_SKILL_DIAGNOSTIC_DEPTH) return;
+  const stats = safeStatSync(targetPath);
+  if (!stats) return;
+
+  if (stats.isFile()) {
+    if (isMarkdownSkillPath(targetPath)) files.add(path.resolve(targetPath));
+    return;
+  }
+
+  if (!stats.isDirectory()) return;
+  const dirKey = pathKey(targetPath);
+  if (seenDirs.has(dirKey)) return;
+  seenDirs.add(dirKey);
+
+  const directSkill = path.join(targetPath, 'SKILL.md');
+  if (safeStatSync(directSkill)?.isFile()) {
+    files.add(path.resolve(directSkill));
+    return;
+  }
+
+  for (const entry of safeReadDirSync(targetPath)) {
+    if (files.size >= MAX_SKILL_DIAGNOSTIC_FILES) return;
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+
+    const fullPath = path.join(targetPath, entry.name);
+    const entryStats = entry.isSymbolicLink() ? safeStatSync(fullPath) : null;
+    const isFile = entry.isFile() || !!entryStats?.isFile();
+    const isDirectory = entry.isDirectory() || !!entryStats?.isDirectory();
+
+    if (depth === 0 && isFile && isMarkdownSkillPath(fullPath)) files.add(path.resolve(fullPath));
+    else if (isDirectory) scanSkillMarkdownFiles(fullPath, files, seenDirs, depth + 1);
+  }
+}
+
+function inspectSkillFrontmatter(filePath) {
+  let content;
+  try {
+    content = fssync.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  } catch {
+    return null;
+  }
+
+  if (!content.startsWith('---')) {
+    const trimmed = content.trimStart();
+    if (trimmed.startsWith('---')) {
+      return {
+        type: 'warning',
+        code: SKILL_FRONTMATTER_MISSING_OPEN_CODE,
+        message: 'Frontmatter opening --- must be the first line of the skill file.',
+        path: filePath
+      };
+    }
+    if (looksLikeUndelimitedSkillFrontmatter(content)) {
+      return {
+        type: 'warning',
+        code: SKILL_FRONTMATTER_MISSING_OPEN_CODE,
+        message: 'Frontmatter appears to be missing the opening --- delimiter. Add --- before name: so YOLO Auto can parse the skill.',
+        path: filePath
+      };
+    }
+    return null;
+  }
+
+  if (content.indexOf('\n---', 3) === -1) {
+    return {
+      type: 'warning',
+      code: SKILL_FRONTMATTER_MISSING_CLOSE_CODE,
+      message: 'Frontmatter is missing the closing --- delimiter.',
+      path: filePath
+    };
+  }
+  return null;
+}
+
+function looksLikeUndelimitedSkillFrontmatter(content) {
+  const head = String(content || '').slice(0, 4096).split('\n').slice(0, 80).join('\n');
+  const beforeBody = head.split(/^\s*#/m)[0];
+  return /^name:\s*\S/im.test(beforeBody) && /^description:\s*/im.test(beforeBody);
+}
+
+function mergeSkillDiagnostics(...groups) {
+  const out = [];
+  const seen = new Set();
+  const missingOpeningPaths = new Set(groups
+    .flat()
+    .filter((diagnostic) => diagnostic?.code === SKILL_FRONTMATTER_MISSING_OPEN_CODE)
+    .map((diagnostic) => pathKey(diagnostic.path || '')));
+
+  for (const diagnostic of groups.flat()) {
+    if (!diagnostic) continue;
+    const message = String(diagnostic.message || '').trim();
+    const keyPath = pathKey(diagnostic.path || '');
+    if (missingOpeningPaths.has(keyPath) && message.toLowerCase() === 'description is required') continue;
+
+    const key = `${diagnostic.type || ''}\u0000${message}\u0000${keyPath}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(diagnostic);
+  }
+  return out;
+}
+
+function isMarkdownSkillPath(filePath) {
+  const basename = path.basename(filePath);
+  return basename === 'SKILL.md' || basename.endsWith('.md');
+}
+
+function safeStatSync(value) {
+  try {
+    return fssync.statSync(value);
+  } catch {
+    return null;
+  }
+}
+
+function safeReadDirSync(value) {
+  try {
+    return fssync.readdirSync(value, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+function resolveSessionPath(value, cwd = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const expanded = expandHomePath(raw);
+  return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(cwd || process.cwd(), expanded));
+}
+
+function expandHomePath(value) {
+  if (value === '~') return os.homedir();
+  if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(os.homedir(), value.slice(2));
+  return value;
+}
+
+function pathKey(value) {
+  const resolved = path.resolve(String(value || ''));
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
 function isSkillEnabled(skill, settings = {}) {

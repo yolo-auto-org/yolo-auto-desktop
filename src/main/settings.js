@@ -97,7 +97,7 @@ function getDefaultSettings() {
   return {
     apiBaseUrl: process.env.YOLO_AUTO_BASE_URL || process.env.OPENAI_BASE_URL || DEFAULT_API_BASE_URL,
     apiKey: process.env.YOLO_AUTO_API_KEY || process.env.OPENAI_API_KEY || '',
-    model: process.env.YOLO_AUTO_MODEL || process.env.OPENAI_MODEL || DEFAULT_MODEL,
+    model: normalizeModelId(process.env.YOLO_AUTO_MODEL || process.env.OPENAI_MODEL || DEFAULT_MODEL, DEFAULT_MODEL),
     thinkingLevel: normalizeThinkingLevel(process.env.YOLO_AUTO_THINKING_LEVEL || process.env.OPENAI_REASONING_EFFORT || 'high', 'high'),
     compatibilityPreset: normalizeCompatibilityPreset(process.env.YOLO_AUTO_COMPATIBILITY_PRESET || process.env.YOLO_AUTO_MODEL_COMPATIBILITY || 'openai'),
     maxConcurrency: normalizeMaxConcurrency(process.env.YOLO_AUTO_MAX_CONCURRENCY, DEFAULT_MAX_CONCURRENCY),
@@ -175,6 +175,7 @@ function mergeSettings(defaults, saved = {}) {
   const merged = {
     ...defaults,
     ...source,
+    model: normalizeModelId(source.model, defaults.model),
     thinkingLevel: normalizeThinkingLevel(source.thinkingLevel, defaults.thinkingLevel),
     compatibilityPreset: normalizeCompatibilityPreset(source.compatibilityPreset, defaults.compatibilityPreset),
     maxConcurrency: normalizeMaxConcurrency(source.maxConcurrency, defaults.maxConcurrency),
@@ -276,7 +277,7 @@ function migrateLegacyApiKey(saved, storedKey) {
 
 function migrateLegacyProviderDefaults(source, defaults) {
   if (String(source.apiBaseUrl || '').trim() !== LEGACY_DEFAULT_API_BASE_URL) return source;
-  if (String(source.model || '').trim() !== LEGACY_DEFAULT_MODEL) return source;
+  if (normalizeModelId(source.model) !== normalizeModelId(LEGACY_DEFAULT_MODEL)) return source;
   return {
     ...source,
     apiBaseUrl: defaults.apiBaseUrl,
@@ -321,12 +322,19 @@ function normalizeApiKey(value) {
   return String(value || '').trim();
 }
 
+function normalizeModelId(value, fallback = '') {
+  const model = String(value || '').trim();
+  const fallbackModel = String(fallback || '').trim();
+  return (model || fallbackModel).toLowerCase();
+}
+
 module.exports = {
   getDefaultSettings,
   loadSettings,
   saveSettings,
   normalizeCompatibilityPreset,
   normalizeMaxConcurrency,
+  normalizeModelId,
   normalizeCompactionSettings,
   normalizeGuardrails,
   normalizeToolSettings,
