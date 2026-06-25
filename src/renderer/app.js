@@ -241,9 +241,16 @@ function bindEvents() {
 
   document.addEventListener('mousedown', (event) => {
     if (!els.filePicker.contains(event.target) && !els.promptInput.contains(event.target)) hideFilePicker();
+    if (!getSessionContextMenu()?.contains(event.target)) hideSessionContextMenu();
   });
 
   document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && isSessionContextMenuOpen()) {
+      event.preventDefault();
+      hideSessionContextMenu();
+      return;
+    }
+
     if (event.key === 'Escape' && state.busy && !els.promptInput.contains(event.target)) {
       event.preventDefault();
       cancelRun();
@@ -721,6 +728,39 @@ async function selectSession(sessionId) {
     });
     renderChrome();
     setStatus(state.busy ? 'Working…' : 'Ready');
+    return true;
+  } catch (error) {
+    addAssistantError(error);
+    return false;
+  }
+}
+
+async function branchSession(sessionOrId) {
+  const session = typeof sessionOrId === 'string'
+    ? state.sessions.find((candidate) => candidate.id === sessionOrId) || { id: sessionOrId }
+    : sessionOrId;
+  const sessionId = session?.id;
+  if (!sessionId) return false;
+
+  if (getSessionStatus(session) === 'running') {
+    setStatus('Cancel the running session before branching it');
+    return false;
+  }
+
+  try {
+    hideSessionContextMenu();
+    setStatus('Branching session…');
+    const payload = await window.yolo.branchSession(sessionId);
+    applySessionPayload(payload);
+    if (payload.active?.session) markSessionReviewed(payload.active.session);
+    state.currentAssistant = null;
+    renderMessagesFromHistory(payload.active?.messages || [], {
+      partialAssistantText: payload.active?.partialAssistantText || '',
+      partialAssistantThinkingText: payload.active?.partialAssistantThinkingText || ''
+    });
+    renderChrome();
+    closeSessionsPane();
+    setStatus('Branched session');
     return true;
   } catch (error) {
     addAssistantError(error);
@@ -1723,6 +1763,66 @@ function createRunningSessionItem(session, options = {}) {
   return item;
 }
 
+function getSessionContextMenu() {
+  return document.getElementById('sessionContextMenu');
+}
+
+function isSessionContextMenuOpen() {
+  const menu = getSessionContextMenu();
+  return !!menu && !menu.classList.contains('hidden');
+}
+
+function ensureSessionContextMenu() {
+  let menu = getSessionContextMenu();
+  if (menu) return menu;
+
+  menu = document.createElement('div');
+  menu.id = 'sessionContextMenu';
+  menu.className = 'session-context-menu hidden';
+  menu.setAttribute('role', 'menu');
+  menu.addEventListener('mousedown', (event) => event.stopPropagation());
+  menu.addEventListener('click', (event) => event.stopPropagation());
+  document.body.appendChild(menu);
+  return menu;
+}
+
+function showSessionContextMenu(event, session) {
+  if (!session?.id) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const menu = ensureSessionContextMenu();
+  menu.innerHTML = '';
+
+  const branchBtn = document.createElement('button');
+  branchBtn.type = 'button';
+  branchBtn.className = 'session-context-menu-item';
+  branchBtn.setAttribute('role', 'menuitem');
+  branchBtn.textContent = 'Branch session';
+  if (getSessionStatus(session) === 'running') {
+    branchBtn.disabled = true;
+    branchBtn.title = 'Cancel the running session before branching it';
+  }
+  branchBtn.addEventListener('click', () => branchSession(session));
+  menu.appendChild(branchBtn);
+
+  menu.classList.remove('hidden');
+  const padding = 8;
+  const rect = menu.getBoundingClientRect();
+  const left = Math.max(padding, Math.min(event.clientX || padding, window.innerWidth - rect.width - padding));
+  const top = Math.max(padding, Math.min(event.clientY || padding, window.innerHeight - rect.height - padding));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  branchBtn.focus({ preventScroll: true });
+}
+
+function hideSessionContextMenu() {
+  const menu = getSessionContextMenu();
+  if (!menu) return;
+  menu.classList.add('hidden');
+  menu.innerHTML = '';
+}
+
 async function terminateSession(sessionId, pendingText = '') {
   try {
     setStatus('Terminating session…');
@@ -1907,6 +2007,7 @@ function createSessionTableRow(session) {
     if (selected) closeSessionsPane();
   };
   row.addEventListener('click', select);
+  row.addEventListener('contextmenu', (event) => showSessionContextMenu(event, session));
   row.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -2052,6 +2153,7 @@ function createSessionItem(session, { showWorkspace = false, closeOnSelect = fal
     const selected = await selectSession(session.id);
     if (selected && closeOnSelect) closeSessionsPane();
   });
+  button.addEventListener('contextmenu', (event) => showSessionContextMenu(event, session));
   return button;
 }
 

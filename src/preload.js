@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('yolo', {
   listSessions: () => ipcRenderer.invoke('sessions:list'),
   getConcurrencyState: () => ipcRenderer.invoke('sessions:concurrency'),
   createSession: () => ipcRenderer.invoke('sessions:create'),
+  branchSession: (sessionId) => ipcRenderer.invoke('sessions:branch', sessionId),
   selectSession: (sessionId) => ipcRenderer.invoke('sessions:select', sessionId),
   setSessionThinkingLevel: (sessionId, thinkingLevel) => ipcRenderer.invoke('sessions:set-thinking-level', sessionId, thinkingLevel),
   deleteSession: (sessionId) => ipcRenderer.invoke('sessions:delete', sessionId),

@@ -350,6 +350,17 @@ function setupIpc() {
     return activeSessionPayload();
   });
 
+  ipcMain.handle('sessions:branch', async (_event, sessionId) => {
+    const id = validateSessionIdInput(sessionId);
+    if (!id) throw new Error('Session not found.');
+
+    const session = await sessionManager.branchSession(id);
+    activeSessionId = session.id;
+    workspaceRoot = session.workspaceRoot || workspaceRoot;
+    saveAppSettings({ activeSessionId, workspaceRoot });
+    return activeSessionPayload();
+  });
+
   ipcMain.handle('sessions:select', async (_event, sessionId) => {
     const session = await sessionManager.ensureSession(validateSessionIdInput(sessionId));
     if (!session) throw new Error('Session not found.');

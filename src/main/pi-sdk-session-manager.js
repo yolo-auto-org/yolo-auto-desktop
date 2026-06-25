@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const fssync = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { getAppIcon } = require('./app-icon');
 const { shouldAskCommandApproval } = require('./command-guardrails');
 const { normalizeCompactionSettings, normalizeMaxConcurrency, normalizeModelId } = require('./settings');
@@ -104,6 +105,90 @@ class PiSdkSessionManager {
     });
     this.emitSessionsChanged();
     return summary;
+  }
+
+  async branchSession(idOrPath) {
+    const sourceRuntime = this.findRuntime(idOrPath);
+    if (sourceRuntime?.session?.isStreaming || sourceRuntime?.runInProgress) {
+      throw new Error('Cancel the running session before branching it.');
+    }
+
+    const info = sourceRuntime ? this.runtimeInfo(sourceRuntime) : await this.getSessionInfo(idOrPath);
+    if (!info) throw new Error('Session not found.');
+
+    const sdk = await this.sdk();
+    await fs.mkdir(this.sessionDir, { recursive: true });
+
+    const sourcePath = sourceRuntime?.sessionFile || info.path || '';
+    const sourceManager = sourcePath && fssync.existsSync(sourcePath)
+      ? sdk.SessionManager.open(sourcePath, this.sessionDir)
+      : sourceRuntime?.session?.sessionManager;
+
+    if (!sourceManager) throw new Error('Session is not available for branching yet.');
+
+    const leafId = typeof sourceManager.getLeafId === 'function' ? sourceManager.getLeafId() : null;
+    if (!leafId) throw new Error('Cannot branch an empty session.');
+
+    let branchedManager;
+    if (sourcePath && fssync.existsSync(sourcePath)) {
+      sourceManager.createBranchedSession(leafId);
+      branchedManager = sourceManager;
+    } else {
+      const branchFile = await this.writeBranchedSessionFile(sourceManager, leafId, sourcePath || undefined);
+      branchedManager = sdk.SessionManager.open(branchFile, this.sessionDir);
+    }
+
+    this.tryNameBranchedSession(branchedManager, info.name || firstUserMessageTitle(branchedManager.buildSessionContext().messages) || info.firstMessage || 'New chat');
+
+    const summary = await this.activatePiSessionManager(branchedManager, {
+      reason: 'fork',
+      select: true,
+      previousSessionFile: sourcePath || sourceRuntime?.sessionFile || info.path
+    });
+    this.emitSessionsChanged();
+    return summary;
+  }
+
+  async writeBranchedSessionFile(sourceManager, leafId, parentSession) {
+    const branch = typeof sourceManager.getBranch === 'function' ? sourceManager.getBranch(leafId) : [];
+    if (!branch.length) throw new Error(`Entry ${leafId} not found`);
+
+    const newSessionId = randomUUID();
+    const timestamp = new Date().toISOString();
+    const fileTimestamp = timestamp.replace(/[:.]/g, '-');
+    const newSessionFile = path.join(this.sessionDir, `${fileTimestamp}_${newSessionId}.jsonl`);
+    const cwd = sourceManager.getCwd?.() || this.getDefaultWorkspaceRoot() || process.cwd();
+    const header = {
+      type: 'session',
+      version: 3,
+      id: newSessionId,
+      timestamp,
+      cwd,
+      parentSession
+    };
+
+    const entries = [];
+    let parentId = null;
+    for (const entry of branch) {
+      if (!entry || entry.type === 'label') continue;
+      const next = { ...entry, parentId };
+      entries.push(next);
+      parentId = next.id;
+    }
+
+    await fs.writeFile(newSessionFile, [header, ...entries].map((entry) => JSON.stringify(entry)).join('\n') + '\n', 'utf8');
+    return newSessionFile;
+  }
+
+  tryNameBranchedSession(piSessionManager, title) {
+    if (typeof piSessionManager?.appendSessionInfo !== 'function') return;
+    const name = makeBranchSessionName(title);
+    if (!name) return;
+    try {
+      piSessionManager.appendSessionInfo(name);
+    } catch (error) {
+      this.log('warn', 'pi:session:branch-name-failed', { error: error?.message || String(error) });
+    }
   }
 
   async listSessions() {
@@ -527,14 +612,14 @@ class PiSdkSessionManager {
     return info?.cwd || this.getDefaultWorkspaceRoot() || '';
   }
 
-  async activatePiSessionManager(piSessionManager, { reason = 'startup', thinkingLevel, select = true } = {}) {
+  async activatePiSessionManager(piSessionManager, { reason = 'startup', thinkingLevel, select = true, previousSessionFile: explicitPreviousSessionFile } = {}) {
     const existing = this.findRuntime(typeof piSessionManager.getSessionId === 'function' ? piSessionManager.getSessionId() : '');
     if (existing) {
       if (select) this.setSelectedRuntime(existing);
       return this.runtimeSummary(existing);
     }
 
-    const previousSessionFile = this.active?.sessionFile;
+    const previousSessionFile = explicitPreviousSessionFile || this.active?.sessionFile;
     const runtimeRef = { current: null };
 
     const cwd = piSessionManager.getCwd() || this.getDefaultWorkspaceRoot() || process.cwd();
@@ -673,7 +758,7 @@ class PiSdkSessionManager {
       customTools,
       sessionStartEvent: {
         type: 'session_start',
-        reason: reason === 'new' ? 'new' : reason === 'resume' ? 'resume' : 'startup',
+        reason: toPiSessionStartReason(reason),
         previousSessionFile
       }
     });
@@ -1435,6 +1520,11 @@ function displayPiThinkingLevel(value) {
   return level === 'off' ? 'none' : level;
 }
 
+function toPiSessionStartReason(reason) {
+  const value = String(reason || '').trim();
+  return ['startup', 'reload', 'new', 'resume', 'fork'].includes(value) ? value : 'startup';
+}
+
 function formatGuardrailBlockedMessage(command, decision = {}) {
   return [
     'Command blocked by AI Guardrails.',
@@ -1704,6 +1794,12 @@ function firstUserMessageTitle(messages) {
   const text = messageText(first).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > 48 ? `${text.slice(0, 45)}…` : text;
+}
+
+function makeBranchSessionName(title) {
+  const base = String(title || 'New chat').replace(/\s+/g, ' ').trim() || 'New chat';
+  const name = /^branch of\b/i.test(base) ? base : `Branch of ${base}`;
+  return name.length > 120 ? `${name.slice(0, 117)}…` : name;
 }
 
 function summarizePiToolResult(toolName, result, ok = true) {
