@@ -3,6 +3,15 @@ const os = require('node:os');
 const GUARDRAIL_MODE_ASK = 'ask';
 const GUARDRAIL_MODE_OFF = 'off';
 const GUARDRAIL_MODES = new Set([GUARDRAIL_MODE_ASK, GUARDRAIL_MODE_OFF]);
+const FILESYSTEM_MUTATING_COMMANDS = new Set([
+  'add-content', 'attrib', 'chgrp', 'chmod', 'chown', 'clear-content', 'copy', 'copy-item', 'cp', 'del', 'erase',
+  'ed', 'ex', 'icacls', 'install', 'ln', 'md', 'mkdir', 'mklink', 'move', 'move-item', 'mv', 'new-item',
+  'ni', 'out-file', 'patch', 'rd', 'ren', 'rename', 'rename-item', 'remove-item', 'ri', 'rm', 'rmdir',
+  'robocopy', 'rsync', 'set-content', 'sponge', 'takeown', 'touch', 'truncate', 'xcopy'
+]);
+const WINDOWS_CMD_SHELLS = new Set(['cmd']);
+const UNIX_SHELLS = new Set(['bash', 'dash', 'fish', 'ksh', 'sh', 'zsh']);
+const POWERSHELL_SHELLS = new Set(['powershell', 'pwsh']);
 
 function normalizeGuardrailsMode(value, fallback = GUARDRAIL_MODE_ASK) {
   const raw = String(value || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
@@ -35,6 +44,43 @@ function shouldAskCommandApproval(command, settings = {}, options = {}) {
     ...classification,
     requiresApproval: classification.action === 'ask'
   };
+}
+
+function shouldBlockShellWriteCommand(command, _settings = {}, options = {}) {
+  const classification = classifyShellWriteCommand(command, options);
+  return {
+    ...classification,
+    blocked: classification.action === 'block'
+  };
+}
+
+function classifyShellWriteCommand(command, options = {}) {
+  if ((options.shellWriteDepth || 0) > 8) {
+    return block('Nested shell command is too deep to prove read-only; use the write or edit tool for file changes.', 'nested-shell-command');
+  }
+
+  const text = normalizeCommandText(command);
+  if (!text) return allow();
+
+  const redirection = findShellOutputRedirection(text);
+  if (redirection) {
+    return block('Shell output redirection writes files; use the write or edit tool instead.', 'shell-output-redirection', { operator: redirection });
+  }
+
+  const heredoc = findShellHeredoc(text);
+  if (heredoc) {
+    return block('Shell heredocs can smuggle generated scripts or file content through the terminal; use read/write/edit tools instead.', 'shell-heredoc', { operator: heredoc });
+  }
+
+  const powerShellDecision = classifyPowerShellWriteText(text);
+  if (powerShellDecision.action === 'block') return powerShellDecision;
+
+  for (const segment of splitShellWriteSegments(text)) {
+    const decision = classifyShellWriteSegment(segment, options);
+    if (decision.action === 'block') return decision;
+  }
+
+  return allow();
 }
 
 function classifyCommand(command, options = {}) {
@@ -79,6 +125,434 @@ function classifySegment(segment, options) {
   if (name === 'mkfs' || name.startsWith('mkfs.')) return ask('mkfs formats a filesystem.', 'mkfs');
 
   return allow();
+}
+
+function classifyShellWriteSegment(segment, options = {}) {
+  const tokens = stripCommandPrefix(shellTokenize(segment));
+  if (!tokens.length) return allow();
+
+  const name = commandName(tokens[0]);
+  if (!name) return allow();
+
+  const nestedDecision = classifyNestedShellWriteCommand(name, tokens, options);
+  if (nestedDecision.action === 'block') return nestedDecision;
+
+  const mutationDecision = classifyFilesystemMutationCommand(name, tokens);
+  if (mutationDecision.action === 'block') return mutationDecision;
+
+  if ((name === 'sed' || name === 'gsed') && tokens.slice(1).some(isSedInPlaceFlag)) {
+    return block('sed in-place editing modifies files through the shell; use the edit tool instead.', 'sed-in-place');
+  }
+
+  if (name === 'perl' && tokens.slice(1).some(isPerlInPlaceFlag)) {
+    return block('perl in-place editing modifies files through the shell; use the edit tool instead.', 'perl-in-place');
+  }
+
+  if (name === 'perl' && hasPerlEvalFlag(tokens) && perlEvalWritesFiles(tokens)) {
+    return block('perl -e file-write scripts are blocked; use the write or edit tool instead.', 'perl-e-file-write');
+  }
+
+  if (name === 'ruby' && hasRubyEvalFlag(tokens) && rubyEvalWritesFiles(tokens)) {
+    return block('ruby -e file-write scripts are blocked; use the write or edit tool instead.', 'ruby-e-file-write');
+  }
+
+  if (name === 'php' && hasPhpEvalFlag(tokens) && phpEvalWritesFiles(tokens)) {
+    return block('php -r file-write scripts are blocked; use the write or edit tool instead.', 'php-r-file-write');
+  }
+
+  if (name === 'tee') {
+    const target = tokens.slice(1).find(isTeeWriteTarget);
+    if (target) return block(`tee writes to ${target}; use the write or edit tool instead.`, 'tee-file-write', { target });
+  }
+
+  if (name === 'node' && hasNodeEvalFlag(tokens) && nodeEvalWritesFiles(tokens)) {
+    return block('node -e file-write scripts are blocked; use the write or edit tool instead.', 'node-e-fs-write');
+  }
+
+  if (isPythonCommandName(name) && hasPythonEvalFlag(tokens) && pythonEvalWritesFiles(tokens)) {
+    return block('python -c file-write scripts are blocked; use the write or edit tool instead.', 'python-c-file-write');
+  }
+
+  const powerShellDecision = classifyPowerShellWriteText(segment);
+  if (powerShellDecision.action === 'block') return powerShellDecision;
+
+  return allow();
+}
+
+function classifyNestedShellWriteCommand(name, tokens, options = {}) {
+  const nested = nestedShellCommandText(name, tokens);
+  if (!nested) return allow();
+  const decision = classifyShellWriteCommand(nested, { ...options, shellWriteDepth: (options.shellWriteDepth || 0) + 1 });
+  if (decision.action === 'block') return decision;
+  return allow();
+}
+
+function nestedShellCommandText(name, tokens) {
+  if (WINDOWS_CMD_SHELLS.has(name)) {
+    const index = tokens.findIndex((token) => /^\/(?:c|k)$/i.test(token));
+    return index >= 0 ? tokens.slice(index + 1).join(' ').trim() : '';
+  }
+
+  if (UNIX_SHELLS.has(name)) {
+    const index = tokens.findIndex((token) => /^-[^-]*c/.test(token) || token === '-c' || token === '--command');
+    return index >= 0 ? tokens.slice(index + 1).join(' ').trim() : '';
+  }
+
+  if (POWERSHELL_SHELLS.has(name)) {
+    if (tokens.some((token) => /^-(?:e|ec|encodedcommand)$/i.test(token))) {
+      return 'set-content encoded-command-blocked';
+    }
+    const index = tokens.findIndex((token) => /^-(?:c|command)$/i.test(token));
+    return index >= 0 ? tokens.slice(index + 1).join(' ').trim() : '';
+  }
+
+  return '';
+}
+
+function classifyFilesystemMutationCommand(name, tokens) {
+  if (FILESYSTEM_MUTATING_COMMANDS.has(name)) {
+    return block(`${name} modifies filesystem state through the shell; use the write or edit tool instead.`, 'shell-filesystem-mutation', { command: name });
+  }
+
+  if (name === 'dd' && tokens.slice(1).some((token) => /^of=/i.test(token))) {
+    return block('dd with of= writes files or devices through the shell; use the write tool instead.', 'dd-output-write');
+  }
+
+  if (name === 'tar' && tarExtractsFiles(tokens)) {
+    return block('tar extraction creates or overwrites files through the shell; use write/edit for file changes.', 'archive-extract-write', { command: name });
+  }
+
+  if ((name === 'unzip' || name === '7z' || name === '7za' || name === 'jar') && archiveCommandWritesFiles(name, tokens)) {
+    return block(`${name} can create or overwrite files through the shell; use write/edit for file changes.`, 'archive-extract-write', { command: name });
+  }
+
+  if (name === 'zip') {
+    return block('zip creates or modifies archive files through the shell; use write/edit for file changes.', 'archive-create-write', { command: name });
+  }
+
+  if ((name === 'curl' || name === 'curl.exe') && curlWritesOutput(tokens)) {
+    return block('curl output-to-file writes through the shell; use the write tool instead.', 'download-file-write', { command: name });
+  }
+
+  if ((name === 'wget' || name === 'wget.exe') && wgetWritesOutput(tokens)) {
+    return block('wget writes downloaded files through the shell; use web/read tools or write explicitly.', 'download-file-write', { command: name });
+  }
+
+  if (name === 'git') return classifyGitFilesystemMutation(tokens);
+  if (isPackageManagerCommand(name)) return classifyPackageManagerMutation(name, tokens);
+
+  return allow();
+}
+
+function tarExtractsFiles(tokens) {
+  return tokens.slice(1).some((token) => {
+    const value = String(token || '').toLowerCase();
+    return value === '--extract' || value === '--get' || (/^-[a-z]*x[a-z]*$/.test(value) && !value.startsWith('--'));
+  });
+}
+
+function archiveCommandWritesFiles(name, tokens) {
+  const args = tokens.slice(1).map((token) => String(token || '').toLowerCase());
+  if (name === 'unzip') return !args.some((token) => token === '-l' || token === '-t' || token === '-v');
+  if (name === 'jar') return args.some((token) => /^-[a-z]*[cux][a-z]*$/.test(token));
+  if (name === '7z' || name === '7za') return args.some((token) => token === 'x' || token === 'e' || token === 'a' || token === 'u' || token === 'd');
+  return false;
+}
+
+function curlWritesOutput(tokens) {
+  return tokens.slice(1).some((token, index, args) => {
+    const value = String(token || '').toLowerCase();
+    if (value === '-o' || value === '--output' || value === '--create-dirs') return true;
+    if (value === '-O' || value === '--remote-name' || value === '--remote-header-name') return true;
+    if (value.startsWith('--output=')) return !value.endsWith('=-');
+    if (value.startsWith('-o') && value.length > 2) return value !== '-o-';
+    return (args[index - 1] === '-o' || args[index - 1] === '--output') && value !== '-';
+  });
+}
+
+function wgetWritesOutput(tokens) {
+  const args = tokens.slice(1).map((token) => String(token || '').toLowerCase());
+  if (args.includes('--spider')) return false;
+  if (args.includes('-o') || args.includes('--output-file')) return true;
+  const outputIndex = args.findIndex((token) => token === '-O' || token === '--output-document');
+  if (outputIndex >= 0) return args[outputIndex + 1] !== '-';
+  if (args.some((token) => token.startsWith('--output-document=') && !token.endsWith('=-'))) return true;
+  return true;
+}
+
+function classifyGitFilesystemMutation(tokens) {
+  const subcommand = tokens.slice(1).find((token) => !String(token || '').startsWith('-'));
+  const name = String(subcommand || '').toLowerCase();
+  if (!name) return allow();
+  if (new Set(['add', 'apply', 'checkout', 'cherry-pick', 'clean', 'clone', 'commit', 'init', 'merge', 'mv', 'pull', 'rebase', 'reset', 'restore', 'revert', 'rm', 'stash', 'switch']).has(name)) {
+    return block(`git ${name} changes repository or workspace files through the shell; use write/edit or ask the user.`, 'git-filesystem-mutation', { command: name });
+  }
+  return allow();
+}
+
+function isPackageManagerCommand(name) {
+  return new Set(['bun', 'cargo', 'composer', 'dotnet', 'go', 'npm', 'pip', 'pip3', 'pnpm', 'yarn']).has(name);
+}
+
+function classifyPackageManagerMutation(name, tokens) {
+  const args = tokens.slice(1).map((token) => String(token || '').toLowerCase()).filter((token) => token && !token.startsWith('-'));
+  const subcommand = args[0] || '';
+  const mutatingByTool = {
+    bun: new Set(['add', 'i', 'install', 'remove', 'rm', 'update', 'upgrade']),
+    cargo: new Set(['add', 'install', 'remove', 'rm', 'update']),
+    composer: new Set(['install', 'remove', 'require', 'update']),
+    dotnet: new Set(['add', 'new', 'remove', 'restore']),
+    go: new Set(['get', 'install', 'mod', 'work']),
+    npm: new Set(['add', 'ci', 'i', 'init', 'install', 'link', 'remove', 'rm', 'uninstall', 'update']),
+    pip: new Set(['install', 'uninstall']),
+    pip3: new Set(['install', 'uninstall']),
+    pnpm: new Set(['add', 'i', 'import', 'install', 'link', 'remove', 'rm', 'uninstall', 'update', 'upgrade']),
+    yarn: new Set(['add', 'import', 'install', 'link', 'remove', 'unplug', 'upgrade'])
+  };
+  if (mutatingByTool[name]?.has(subcommand)) {
+    return block(`${name} ${subcommand} writes files through the shell; use write/edit for file changes.`, 'package-manager-file-write', { command: name, subcommand });
+  }
+
+  if ((name === 'npm' || name === 'pnpm' || name === 'bun' || name === 'yarn') && (subcommand === 'run' || subcommand === 'run-script')) {
+    const scriptName = args[1] || '';
+    if (scriptName && !isReadOnlyPackageScript(scriptName)) {
+      return block(`${name} ${subcommand} ${scriptName} may write files through the shell; use write/edit for file changes.`, 'package-manager-file-write', { command: name, subcommand, scriptName });
+    }
+  }
+
+  return allow();
+}
+
+function isReadOnlyPackageScript(scriptName) {
+  return /^(?:audit|check|doctor|lint|list|ls|outdated|status|test|typecheck|verify|why)(?::|$)/i.test(String(scriptName || ''));
+}
+
+function isSedInPlaceFlag(token) {
+  const value = String(token || '').toLowerCase();
+  return value === '-i' || value.startsWith('-i') || value === '--in-place' || value.startsWith('--in-place=');
+}
+
+function isPerlInPlaceFlag(token) {
+  const value = String(token || '');
+  if (value.startsWith('-I')) return false;
+  return value === '-i' || value.startsWith('-i') || /^-[A-Za-z]*i$/.test(value) || /^-[A-Za-z]*i[A-Za-z]*$/.test(value);
+}
+
+function hasPerlEvalFlag(tokens) {
+  return tokens.slice(1).some((token) => String(token || '') === '-e' || String(token || '').startsWith('-e'));
+}
+
+function perlEvalWritesFiles(tokens) {
+  const code = tokens.join(' ');
+  return /\bopen\s*\(?\s*[^,;]+\s*,\s*['"]?[>+wa]/i.test(code)
+    || /\b(?:unlink|rename|mkdir|rmdir|chmod|chown)\s*\(/i.test(code);
+}
+
+function hasRubyEvalFlag(tokens) {
+  return tokens.slice(1).some((token) => String(token || '') === '-e' || String(token || '').startsWith('-e'));
+}
+
+function rubyEvalWritesFiles(tokens) {
+  const code = tokens.join(' ');
+  return /\b(?:File|IO)\s*\.\s*(?:write|binwrite|delete|rename|truncate|mkdir)\s*\(/i.test(code)
+    || /\bFile\s*\.\s*open\s*\([^)]*,\s*['"]?[wa]/i.test(code);
+}
+
+function hasPhpEvalFlag(tokens) {
+  return tokens.slice(1).some((token) => String(token || '') === '-r' || String(token || '').startsWith('-r'));
+}
+
+function phpEvalWritesFiles(tokens) {
+  const code = tokens.join(' ');
+  return /\b(?:file_put_contents|fwrite|unlink|rename|mkdir|rmdir|chmod|chown)\s*\(/i.test(code)
+    || /\bfopen\s*\([^)]*,\s*['"]?[wa]/i.test(code);
+}
+
+function isTeeWriteTarget(token) {
+  const value = stripWrappingQuotes(String(token || '').trim());
+  if (!value || value.startsWith('-')) return false;
+  const lowered = value.toLowerCase();
+  return lowered !== '-' && lowered !== '/dev/null' && lowered !== 'nul' && !lowered.startsWith('>(');
+}
+
+function hasNodeEvalFlag(tokens) {
+  return tokens.slice(1).some((token) => {
+    const value = String(token || '');
+    return value === '-e'
+      || value === '-p'
+      || value === '--eval'
+      || value === '--print'
+      || value.startsWith('--eval=')
+      || value.startsWith('--print=')
+      || (/^-[A-Za-z]*[ep][A-Za-z]*$/.test(value) && !value.startsWith('--'));
+  });
+}
+
+function nodeEvalWritesFiles(tokens) {
+  const code = tokens.join(' ');
+  const fsMethod = /\b(?:fs|fsp|fsPromises)(?:\s*\.\s*promises)?\s*\.\s*(?:writeFile|appendFile|createWriteStream|truncate|copyFile|cp|rename|rm|unlink|mkdir)(?:Sync)?\b/i;
+  const fsImport = /\b(?:require|import)\s*\(\s*['"]?(?:node:)?fs(?:\/promises)?['"]?\s*\)/i;
+  const fsWriteFunction = /\b(?:writeFile|appendFile|createWriteStream|truncate|copyFile|cp|rename|rm|unlink|mkdir)(?:Sync)?\s*\(/i;
+  return fsMethod.test(code) || (fsImport.test(code) && fsWriteFunction.test(code));
+}
+
+function isPythonCommandName(name) {
+  return name === 'python' || name === 'python3' || name === 'py';
+}
+
+function hasPythonEvalFlag(tokens) {
+  return tokens.slice(1).some((token) => String(token || '') === '-c' || String(token || '').startsWith('-c'));
+}
+
+function pythonEvalWritesFiles(tokens) {
+  const code = tokens.join(' ');
+  return /\bopen\s*\([^)]*,\s*['"]?[wax]/i.test(code)
+    || /\.\s*(?:write_text|write_bytes)\s*\(/i.test(code);
+}
+
+function classifyPowerShellWriteText(text) {
+  if (/(?:\[\s*(?:system\.)?io\.file\s*\]|(?:system\.)?io\.file)\s*::\s*(?:writealltext|writeallbytes|appendalltext|appendallbytes)\b/i.test(text)) {
+    return block('PowerShell .NET file-write calls are blocked; use the write or edit tool instead.', 'powershell-file-write');
+  }
+  if (/\b(?:set-content|add-content|clear-content|out-file)\b/i.test(text)) {
+    return block('PowerShell content-writing commands are blocked; use the write or edit tool instead.', 'powershell-file-write');
+  }
+  if (/\b(?:new-item|copy-item|move-item|rename-item|remove-item)\b/i.test(text)) {
+    return block('PowerShell filesystem mutation commands are blocked; use the write or edit tool instead.', 'powershell-file-write');
+  }
+  return allow();
+}
+
+function findShellOutputRedirection(text) {
+  let quote = '';
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      if (char === quote) quote = '';
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (char !== '>') continue;
+
+    const previous = text[index - 1] || '';
+    const next = text[index + 1] || '';
+    if (previous === '<' || next === '(' || next === '=') continue;
+    if (next === '&' && /\d/.test(text[index + 2] || '')) continue;
+    return next === '>' ? '>>' : (previous === '&' ? '&>' : '>');
+  }
+
+  return '';
+}
+
+function findShellHeredoc(text) {
+  let quote = '';
+  let escaped = false;
+
+  for (let index = 0; index < text.length - 1; index += 1) {
+    const char = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      if (char === quote) quote = '';
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (char === '<' && text[index + 1] === '<') return text[index + 2] === '<' ? '<<<' : '<<';
+  }
+
+  return '';
+}
+
+function splitShellWriteSegments(text) {
+  const segments = [];
+  let current = '';
+  let quote = '';
+  let escaped = false;
+
+  const push = () => {
+    const value = current.trim();
+    if (value) segments.push(value);
+    current = '';
+  };
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && quote !== "'") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      current += char;
+      if (char === quote) quote = '';
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      current += char;
+      quote = char;
+      continue;
+    }
+
+    if (char === ';' || char === '\n' || char === '\r') {
+      push();
+      continue;
+    }
+
+    if (char === '&' && text[index + 1] === '&') {
+      push();
+      index += 1;
+      continue;
+    }
+
+    if (char === '|') {
+      push();
+      if (text[index + 1] === '|') index += 1;
+      continue;
+    }
+
+    current += char;
+  }
+
+  push();
+  return segments;
 }
 
 function classifyRm(tokens, options) {
@@ -348,12 +822,18 @@ function ask(reason, rule, extra = {}) {
   return { action: 'ask', reason, rule, ...extra };
 }
 
+function block(reason, rule, extra = {}) {
+  return { action: 'block', reason, rule, ...extra };
+}
+
 module.exports = {
   GUARDRAIL_MODE_ASK,
   GUARDRAIL_MODE_OFF,
   classifyCommand,
+  classifyShellWriteCommand,
   guardrailsAreDisabled,
   normalizeGuardrails,
   normalizeGuardrailsMode,
-  shouldAskCommandApproval
+  shouldAskCommandApproval,
+  shouldBlockShellWriteCommand
 };

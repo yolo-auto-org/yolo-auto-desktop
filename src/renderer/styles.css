@@ -19,6 +19,8 @@
   --red-rgb: 254, 74, 73;
   --yellow: #facc15;
   --yellow-rgb: 250, 204, 21;
+  --goal: #f59e0b;
+  --goal-rgb: 245, 158, 11;
   --purple: #a855f7;
   --purple-rgb: 168, 85, 247;
   --shadow: rgba(0, 0, 0, 0.18);
@@ -60,6 +62,8 @@
   --red-rgb: 220, 38, 38;
   --yellow: #eab308;
   --yellow-rgb: 234, 179, 8;
+  --goal: #b45309;
+  --goal-rgb: 180, 83, 9;
   --purple: #7c3aed;
   --purple-rgb: 124, 58, 237;
   --shadow: rgba(15, 23, 42, 0.08);
@@ -559,6 +563,11 @@ button {
   box-shadow: 0 0 0 3px rgba(var(--red-rgb), 0.14), 0 0 10px rgba(var(--red-rgb), 0.5);
 }
 
+.status-indicator.status-goal .status-light {
+  background: var(--goal);
+  box-shadow: 0 0 0 3px rgba(var(--goal-rgb), 0.14), 0 0 10px rgba(var(--goal-rgb), 0.46);
+}
+
 .status-indicator.status-working .status-light {
   animation: status-pulse 0.9s ease-in-out infinite;
 }
@@ -747,6 +756,16 @@ button {
 .message.skill .bubble {
   border-color: rgba(var(--purple-rgb), 0.38);
   background: rgba(var(--purple-rgb), 0.12);
+}
+
+.message.goal .avatar {
+  background: var(--goal);
+  color: #111827;
+}
+
+.message.goal .bubble {
+  border-color: rgba(var(--goal-rgb), 0.42);
+  background: rgba(var(--goal-rgb), 0.11);
 }
 
 .skill-title {
@@ -1133,6 +1152,22 @@ button {
   box-shadow: 0 0 0 4px rgba(var(--purple-rgb), 0.16);
 }
 
+.tool-item.goal {
+  border-color: rgba(var(--goal-rgb), 0.4);
+  background: rgba(var(--goal-rgb), 0.11);
+}
+
+.tool-item.goal .tool-name {
+  color: var(--goal);
+}
+
+.tool-item.goal .tool-pill,
+.tool-item.goal.ok .tool-pill,
+.tool-item.goal.error .tool-pill {
+  background: var(--goal);
+  box-shadow: 0 0 0 4px rgba(var(--goal-rgb), 0.16);
+}
+
 .tool-body {
   display: none;
   border-top: 1px solid var(--soft-border);
@@ -1284,7 +1319,7 @@ button {
 
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto auto auto;
   align-items: end;
   gap: 10px;
   max-width: 930px;
@@ -1378,8 +1413,28 @@ button {
   background: rgba(var(--purple-rgb), 0.13);
 }
 
+.file-picker[data-mode="command"] .file-picker-item.active,
+.file-picker[data-mode="command"] .file-picker-item:hover {
+  background: rgba(var(--accent-rgb), 0.13);
+}
+
+.file-picker[data-mode="command"] .file-picker-item.goal-command.active,
+.file-picker[data-mode="command"] .file-picker-item.goal-command:hover {
+  background: rgba(var(--goal-rgb), 0.14);
+}
+
 .file-picker[data-mode="skill"] .file-picker-type {
   color: var(--purple);
+}
+
+.file-picker[data-mode="command"] .file-picker-type,
+.file-picker[data-mode="command"] .skill-picker-copy strong {
+  color: var(--accent);
+}
+
+.file-picker[data-mode="command"] .goal-command .file-picker-type,
+.file-picker[data-mode="command"] .goal-command .skill-picker-copy strong {
+  color: var(--goal);
 }
 
 .file-picker-path {
@@ -1443,6 +1498,17 @@ button {
 .follow-up-button:hover {
   border-color: rgba(var(--accent-rgb), 0.55);
   background: rgba(var(--accent-rgb), 0.08);
+}
+
+.goal-button {
+  color: var(--goal);
+  border-color: rgba(var(--goal-rgb), 0.35);
+  background: rgba(var(--goal-rgb), 0.1);
+}
+
+.goal-button:hover {
+  border-color: rgba(var(--goal-rgb), 0.58);
+  background: rgba(var(--goal-rgb), 0.16);
 }
 
 .cancel-button {

@@ -12,6 +12,28 @@ const FALLBACK_TOOL_DEFINITIONS = [
   { name: 'get_web', label: 'Get web compatibility', group: 'Web', description: 'Compatibility wrapper for web_search/web_fetch. Disabled automatically unless both are enabled.' },
   { name: 'browser', label: 'Browser automation', group: 'Browser', description: 'Open live pages and interact with visible controls.' }
 ];
+const COMMAND_SUGGESTIONS = Object.freeze([
+  { name: '/goal-set', description: 'Create and start a goal immediately' },
+  { name: '/goals', description: 'Discuss and confirm a goal first' },
+  { name: '/goals-set', description: 'Create and start a goal immediately' },
+  { name: '/goal-status', description: 'Show focused goal state' },
+  { name: '/goal-list', description: 'List open goals' },
+  { name: '/goal-focus', description: 'Switch focused goal' },
+  { name: '/goal-pause', description: 'Pause the focused goal' },
+  { name: '/goal-resume', description: 'Resume a paused goal' },
+  { name: '/goal-tweak', description: 'Revise the focused goal' },
+  { name: '/goal-abort', description: 'Abort/archive the focused goal' },
+  { name: '/goal-clear', description: 'Archive the focused goal' },
+  { name: '/goal-settings', description: 'Configure goal settings' },
+  { name: '/sisyphus', description: 'Discuss an ordered step-by-step goal' },
+  { name: '/sisyphus-set', description: 'Start an ordered step-by-step goal immediately' },
+  { name: '/skill:', description: 'Run a loaded skill', insert: '/skill:' },
+  { name: '/compact', description: 'Compact the current session context' },
+  { name: '/session', description: 'Show current session stats' },
+  { name: '/tools', description: 'List active tools' },
+  { name: '/loop-police', description: 'Show loop detection status or tune loop police' },
+  { name: '/stop', description: 'Cancel the running session' }
+]);
 const RECENT_SESSION_LIMIT = 5;
 const BOTTOM_SCROLL_THRESHOLD = 32;
 const AUTO_SCROLL_SETTLE_FRAMES = 4;
@@ -116,6 +138,7 @@ const els = {
   toolsStatus: document.getElementById('toolsStatus'),
   promptInput: document.getElementById('promptInput'),
   sendBtn: document.getElementById('sendBtn'),
+  setGoalBtn: document.getElementById('setGoalBtn'),
   followUpBtn: document.getElementById('followUpBtn'),
   cancelBtn: document.getElementById('cancelBtn'),
   chooseWorkspaceBtn: document.getElementById('chooseWorkspaceBtn'),
@@ -196,6 +219,7 @@ function bindEvents() {
   els.promptInput.setAttribute('spellcheck', 'false');
 
   els.sendBtn.addEventListener('click', primaryAction);
+  els.setGoalBtn.addEventListener('click', prefixGoalCommand);
   els.followUpBtn.addEventListener('click', () => queuePrompt('followUp'));
   els.cancelBtn.addEventListener('click', cancelRun);
   els.messages.addEventListener('scroll', handleMessagesScroll, { passive: true });
@@ -373,6 +397,14 @@ function setPromptText(text) {
   els.promptInput.textContent = String(text || '');
 }
 
+function prefixGoalCommand() {
+  const text = getPromptText().trim();
+  const goalPrefix = /^\/(?:goals-set|goal-set)(?:\s+|$)/i.test(text);
+  setPromptText(goalPrefix ? text.replace(/^(\/(?:goals-set|goal-set))$/i, '$1 ') : text ? `/goals-set ${text}` : '/goals-set ');
+  autoGrowPrompt();
+  focusPromptEnd();
+}
+
 function clearPrompt() {
   hideFilePicker();
   els.promptInput.innerHTML = '';
@@ -426,6 +458,7 @@ function handleFilePickerKeydown(event) {
     const selected = state.filePicker.results[state.filePicker.selectedIndex];
     if (selected) {
       if (state.filePicker.mode === 'skill') insertSkillCommand(selected.name);
+      else if (state.filePicker.mode === 'command') insertSlashCommand(selected);
       else insertFilePill(selected.path);
     }
     return true;
@@ -461,6 +494,18 @@ async function updateFilePickerFromCaret() {
       loadingLabel: 'Loading skills…',
       emptyLabel: 'No matching skills',
       load: () => window.yolo.skillSuggestions(state.activeSessionId, skillCommand.query)
+    });
+    return;
+  }
+
+  const slashCommand = getActiveSlashCommand();
+  if (slashCommand) {
+    await openPickerFromCaret({
+      mode: 'command',
+      anchor: slashCommand,
+      loadingLabel: 'Loading commands…',
+      emptyLabel: 'No matching commands',
+      load: () => matchingSlashCommands(slashCommand.query)
     });
     return;
   }
@@ -541,6 +586,37 @@ function getActiveSkillCommand() {
   };
 }
 
+function getActiveSlashCommand() {
+  const selection = window.getSelection();
+  if (!selection.rangeCount || document.activeElement !== els.promptInput) return null;
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed || !els.promptInput.contains(range.startContainer)) return null;
+  if (range.startContainer.nodeType !== Node.TEXT_NODE) return null;
+
+  const node = range.startContainer;
+  const offset = range.startOffset;
+  const before = node.textContent.slice(0, offset);
+  const match = before.match(/(^|[\n\r])([ \t]*)\/([^\s/]*)$/);
+  if (!match) return null;
+
+  const commandStart = (match.index || 0) + match[1].length;
+  if (getEditorTextBefore(node, commandStart).trim()) return null;
+
+  return {
+    node,
+    startOffset: commandStart,
+    endOffset: offset,
+    query: match[3] || ''
+  };
+}
+
+function matchingSlashCommands(query) {
+  const needle = String(query || '').toLowerCase();
+  return COMMAND_SUGGESTIONS
+    .filter((command) => command.name.slice(1).toLowerCase().startsWith(needle))
+    .slice(0, 30);
+}
+
 function getEditorTextBefore(node, offset) {
   const range = document.createRange();
   range.setStart(els.promptInput, 0);
@@ -561,7 +637,7 @@ function renderFilePicker(overrideResults) {
   els.filePicker.classList.remove('hidden');
   els.filePicker.dataset.mode = state.filePicker.mode || 'file';
   if (!results.length) {
-    const label = state.filePicker.emptyLabel || (state.filePicker.mode === 'skill' ? 'No matching skills' : 'No matching files');
+    const label = state.filePicker.emptyLabel || (state.filePicker.mode === 'skill' ? 'No matching skills' : state.filePicker.mode === 'command' ? 'No matching commands' : 'No matching files');
     els.filePicker.innerHTML = `<div class="file-picker-empty">${escapeHtml(label)}</div>`;
     return;
   }
@@ -577,11 +653,14 @@ function renderFilePicker(overrideResults) {
     }
 
     const isSkill = state.filePicker.mode === 'skill';
+    const isCommand = state.filePicker.mode === 'command';
+    const isGoalCommand = isCommand && isGoalCommandName(item.name);
+    const isRich = isSkill || isCommand;
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = `file-picker-item${isSkill ? ' skill-picker-item' : ''}${index === state.filePicker.selectedIndex ? ' active' : ''}`;
-    button.innerHTML = isSkill ? `
-      <span class="file-picker-type">skill</span>
+    button.className = `file-picker-item${isRich ? ' skill-picker-item' : ''}${isGoalCommand ? ' goal-command' : ''}${index === state.filePicker.selectedIndex ? ' active' : ''}`;
+    button.innerHTML = isRich ? `
+      <span class="file-picker-type">${isSkill ? 'skill' : 'cmd'}</span>
       <span class="file-picker-path skill-picker-copy">
         <strong></strong>
         <small></small>
@@ -596,6 +675,9 @@ function renderFilePicker(overrideResults) {
     if (isSkill) {
       button.querySelector('strong').textContent = `/skill:${item.name}`;
       button.querySelector('small').textContent = item.description || item.location || '';
+    } else if (isCommand) {
+      button.querySelector('strong').textContent = item.name;
+      button.querySelector('small').textContent = item.description || '';
     } else {
       button.querySelector('.file-picker-path').textContent = item.path;
     }
@@ -603,6 +685,7 @@ function renderFilePicker(overrideResults) {
     button.addEventListener('mousedown', (event) => {
       event.preventDefault();
       if (isSkill) insertSkillCommand(item.name);
+      else if (isCommand) insertSlashCommand(item);
       else insertFilePill(item.path);
     });
     els.filePicker.appendChild(button);
@@ -655,15 +738,25 @@ function insertFilePill(filePath) {
 }
 
 function insertSkillCommand(skillName) {
+  insertPickerText(skillName ? `/skill:${skillName} ` : '');
+}
+
+function insertSlashCommand(command) {
+  const text = command?.insert ?? `${command?.name || ''} `;
+  insertPickerText(text);
+  updateFilePickerFromCaret();
+}
+
+function insertPickerText(text) {
   const anchor = state.filePicker.anchor;
-  if (!anchor?.node?.isConnected || !skillName) return;
+  if (!anchor?.node?.isConnected || !text) return;
 
   const range = document.createRange();
   range.setStart(anchor.node, anchor.startOffset);
   range.setEnd(anchor.node, anchor.endOffset);
   range.deleteContents();
 
-  const node = document.createTextNode(`/skill:${skillName} `);
+  const node = document.createTextNode(text);
   range.insertNode(node);
   range.setStartAfter(node);
   range.collapse(true);
@@ -2320,7 +2413,7 @@ async function sendPrompt(providedText) {
       state.busy = false;
       state.currentAssistant = null;
       updateBusyUi();
-      if (!els.statusText.textContent || ['Thinking…', 'Working…', 'Cancelling…'].includes(els.statusText.textContent)) setStatus('Ready');
+      if (!els.statusText.textContent || isWorkingStatus(els.statusText.textContent)) setStatus(runCancelled ? 'Cancelled' : 'Ready');
       scrollToBottom();
     }
     renderSessions();
@@ -2452,7 +2545,7 @@ function assistantHistoryItemHasDisplay(item = {}) {
 
 function addMessage(role, content, options = {}) {
   const message = document.createElement('article');
-  message.className = `message ${role}`;
+  message.className = `message ${role}${isGoalMessage(role, content) ? ' goal' : ''}`;
 
   const avatar = document.createElement('div');
   avatar.className = 'avatar';
@@ -2584,6 +2677,7 @@ function setAssistantThinking(shell, thinkingText) {
 function setAssistantContent(shell, contentText) {
   if (!shell?.content) return;
   const text = String(contentText || '');
+  if (shell.message) shell.message.classList.toggle('goal', isGoalAssistantText(text));
   setRenderedText(shell.content, text || '(no response)');
   if (shell.historyItem) shell.historyItem.content = text;
 }
@@ -2708,14 +2802,19 @@ function handleAgentEvent(event) {
     return;
   }
 
+  if (event.type === 'tool:composing') {
+    const shell = ensureAssistantShell();
+    const item = upsertPendingTool(shell, event);
+    item.summary.textContent = compactToolLabel(item.name, item.args, 'Composing…');
+    scrollToBottom();
+    return;
+  }
+
   if (event.type === 'tool:start') {
     const shell = ensureAssistantShell();
-    const item = createToolItem(event);
-    shell.tools.set(event.id, item);
-    shell.activity.appendChild(item.root);
-    trackAssistantHistoryTool(shell, item, event, { status: 'pending' });
-    markAssistantHasActivity(shell);
+    upsertPendingTool(shell, event);
     scrollToBottom();
+    return;
   }
 
   if (event.type === 'tool:result') {
@@ -2802,6 +2901,22 @@ function renderQueue() {
   `).join('');
 }
 
+function upsertPendingTool(shell, event) {
+  const item = shell.tools.get(event.id) || createToolItem(event);
+  if (!shell.tools.has(event.id)) {
+    shell.tools.set(event.id, item);
+    shell.activity.appendChild(item.root);
+  }
+  item.name = event.name || item.name;
+  item.args = event.args || item.args || {};
+  item.root.classList.remove('ok', 'error', 'cancelled');
+  item.root.classList.add('pending');
+  item.summary.textContent = compactToolLabel(item.name, item.args);
+  trackAssistantHistoryTool(shell, item, event, { status: 'pending' });
+  markAssistantHasActivity(shell);
+  return item;
+}
+
 function markPendingToolsCancelled(shell = state.currentAssistant) {
   if (!shell?.tools) return;
   for (const item of shell.tools.values()) {
@@ -2876,7 +2991,7 @@ function addAssistantHistoryMessage(item = {}) {
     shell.content.innerHTML = `<span class="error-text">Error: ${escapeHtml(displayError(error))}</span>`;
     shell.message.classList.add('has-error');
   } else if (content) {
-    setRenderedText(shell.content, content);
+    setAssistantContent(shell, content);
   }
   state.currentAssistant = null;
   scrollToBottom();
@@ -2909,7 +3024,7 @@ function applyToolHistoryState(item, tool = {}) {
 
 function createToolItem(event) {
   const root = document.createElement('div');
-  root.className = 'tool-item pending';
+  root.className = `tool-item pending${isGoalToolName(event.name) ? ' goal' : ''}`;
 
   const head = document.createElement('div');
   head.className = 'tool-head';
@@ -2986,6 +3101,22 @@ function compactToolLabel(name, args = {}, resultSummary = '') {
   const detail = summarizeArgs(name, args);
   const left = [action, detail].filter(Boolean).join(': ');
   return resultSummary ? `${left || action} — ${resultSummary}` : left || action;
+}
+
+function isGoalCommandName(name) {
+  return /^\/(?:goal|goals|sisyphus)(?:-|$)/.test(String(name || '')) || String(name || '') === '/goals' || String(name || '') === '/sisyphus';
+}
+
+function isGoalMessage(role, content) {
+  return role === 'user' && /^\s*\/(?:goal|goals|sisyphus)(?:\b|-)/i.test(String(content || ''));
+}
+
+function isGoalAssistantText(text) {
+  return /^\s*(?:Goal set\.|Goal |Sisyphus |Auto-continue)/i.test(String(text || ''));
+}
+
+function isGoalToolName(name) {
+  return /^(?:goal_|get_goal|create_goal|propose_goal_|complete_goal|pause_goal|abort_goal|step_complete|propose_task_list|complete_task|skip_task)/.test(String(name || ''));
 }
 
 function displayToolName(name) {
@@ -3230,6 +3361,7 @@ function updateStatusIndicator(message) {
   els.statusIndicator.classList.toggle('status-ok', level === 'ok');
   els.statusIndicator.classList.toggle('status-warn', level === 'warn');
   els.statusIndicator.classList.toggle('status-error', level === 'error');
+  els.statusIndicator.classList.toggle('status-goal', isGoalStatus(message));
   els.statusIndicator.classList.toggle('status-working', level === 'warn' && isWorkingStatus(message));
 }
 
@@ -3237,13 +3369,17 @@ function getStatusLevel(message) {
   const text = String(message || '').toLowerCase();
   if (/cancelled|canceled/.test(text)) return 'warn';
   if (/error|failed|failure|blocked|denied|not found/.test(text)) return 'error';
-  if (/thinking|working|running|queue|cancell?ing|compact|retrying|waiting|preparing|loading|saving|refreshing|approv/.test(text)) return 'warn';
+  if (/thinking|working|running|queue|cancell?ing|compact|retrying|waiting|preparing|composing|loading|saving|refreshing|approv/.test(text)) return 'warn';
   return 'ok';
 }
 
 function isWorkingStatus(message) {
   const text = String(message || '').toLowerCase();
-  return state.busy || /thinking|working|running|queue|cancell?ing|compact|retrying|waiting|preparing|loading|saving|refreshing/.test(text);
+  return state.busy || /thinking|working|running|queue|cancell?ing|compact|retrying|waiting|preparing|composing|loading|saving|refreshing/.test(text);
+}
+
+function isGoalStatus(message) {
+  return /\b(goal|sisyphus|auto-continue)\b/i.test(String(message || ''));
 }
 
 function parseSkillBlock(text) {

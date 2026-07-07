@@ -87,6 +87,7 @@
         <div id="filePicker" class="file-picker hidden"></div>
         <div class="composer">
           <div id="promptInput" class="composer-editor" contenteditable="true" spellcheck="false" autocorrect="off" autocapitalize="off" role="textbox" aria-multiline="true" data-placeholder="Ask yolo-auto to handle something for you…"></div>
+          <button id="setGoalBtn" class="action-button goal-button" type="button" title="Prefix this prompt with /goals-set">Set Goal</button>
           <button id="followUpBtn" class="action-button follow-up-button hidden" type="button">Follow up</button>
           <button id="cancelBtn" class="action-button cancel-button hidden" type="button">Cancel</button>
           <button id="sendBtn" class="send-button" aria-label="Send message">
@@ -104,7 +105,7 @@
             <span id="tokenUsageText">I/O: 0 in · 0 out</span>
           </div>
           <button id="resetBtn" class="link-button" type="button">Reset session</button>
-          <button class="help-button" type="button" aria-label="Type @ to mention files, or /skill for loaded skill suggestions. ! runs bash, !! runs bash without adding output to context. /compact, /session, /tools are local commands. Enter sends; while it works: Enter steers, Alt+Enter follows up, Esc or /stop cancels." title="Type @ to mention files, or /skill for loaded skill suggestions. ! runs bash, !! runs bash without adding output to context. /compact, /session, /tools are local commands. Enter sends; while it works: Enter steers, Alt+Enter follows up, Esc or /stop cancels.">?</button>
+          <button class="help-button" type="button" aria-label="Type @ to mention files, / for command suggestions, or /skill for loaded skill suggestions. ! runs bash, !! runs bash without adding output to context. Goal commands include /goal-set and /goals. Enter sends; while it works: Enter steers, Alt+Enter follows up, Esc or /stop cancels." title="Type @ to mention files, / for command suggestions, or /skill for loaded skill suggestions. ! runs bash, !! runs bash without adding output to context. Goal commands include /goal-set and /goals. Enter sends; while it works: Enter steers, Alt+Enter follows up, Esc or /stop cancels.">?</button>
         </div>
       </footer>
     </main>

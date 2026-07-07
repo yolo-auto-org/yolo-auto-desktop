@@ -4,7 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { getAppIcon } = require('./app-icon');
-const { shouldAskCommandApproval } = require('./command-guardrails');
+const { shouldAskCommandApproval, shouldBlockShellWriteCommand } = require('./command-guardrails');
 const { normalizeCompactionSettings, normalizeMaxConcurrency, normalizeModelId } = require('./settings');
 const { metricsFromAgentSession, metricsFromSessionFile, formatSessionMetrics } = require('./session-metrics');
 
@@ -13,6 +13,21 @@ const DEFAULT_MODEL = 'qwen3.6-35b-a3b';
 const DEFAULT_BASE_URL = 'https://yolo-auto.com/v1';
 const DEFAULT_CONTEXT_WINDOW = 131_072;
 const DEFAULT_MAX_TOKENS = 16_384;
+const GOAL_EXTENSION_TOOL_NAMES = Object.freeze([
+  'goal_question',
+  'goal_questionnaire',
+  'get_goal',
+  'create_goal',
+  'propose_goal_draft',
+  'propose_goal_tweak',
+  'complete_goal',
+  'pause_goal',
+  'abort_goal',
+  'step_complete',
+  'propose_task_list',
+  'complete_task',
+  'skip_task'
+]);
 const TOOL_TEXT_LIMIT = 50_000;
 const WEB_MAX_RESPONSE_BYTES = 8_000_000;
 const EMPTY_RESPONSE_RETRY_PROMPT = 'The previous turn produced no user-visible answer. Continue from the current state and produce the visible answer now. Do not restart from scratch.';
@@ -425,7 +440,10 @@ class PiSdkSessionManager {
     const [command, ...rest] = input.slice(1).split(/\s+/);
     const args = rest.join(' ').trim();
 
-    if (command === 'compact') {
+    if (command === 'goal-set') {
+      await active.session.prompt(`/goals-set${args ? ` ${args}` : ''}`, { source: 'interactive' });
+      content = 'Goal set. Auto-continue is on.';
+    } else if (command === 'compact') {
       this.emit({ type: 'status', message: 'Compacting context…', sessionId: active.id });
       await active.session.compact(args || undefined);
       content = 'Context compacted.';
@@ -643,6 +661,7 @@ class PiSdkSessionManager {
       initialPromptText: '',
       initialUserSeen: false,
       toolCalls: new Map(),
+      composingToolSummaries: new Map(),
       cancelledToolCallIds: new Set(),
       failedToolCallIds: new Set(),
       seenSkillKeys: new Set(),
@@ -732,6 +751,7 @@ class PiSdkSessionManager {
       agentDir: this.agentDir,
       settingsManager,
       additionalSkillPaths: getExtraSkillDirs(settings),
+      additionalExtensionPaths: getBundledPiPackagePaths(),
       skillsOverride: (result) => filterSkillsForSettings(result, settings),
       agentsFilesOverride: (base) => this.appendSoulContext(base, cwd),
       appendSystemPromptOverride: (base) => [
@@ -743,7 +763,7 @@ class PiSdkSessionManager {
 
     const customTools = (await this.createCustomTools(cwd, settingsManager, runtimeRef))
       .filter((tool) => isAgentToolEnabled(tool?.name, settings));
-    const toolNames = activeToolNamesForSettings(settings);
+    const toolNames = allowedToolNamesForSettings(settings);
     return sdk.createAgentSession({
       cwd,
       agentDir: this.agentDir,
@@ -799,14 +819,31 @@ class PiSdkSessionManager {
 
     return {
       ...base,
-      description: `${base.description} YOLO Auto may ask for user approval before extremely dangerous commands unless AI Guardrails are in YOLO mode.`,
+      description: `${base.description} Use bash for inspection and running checks only; do not create, delete, rename, copy, or modify files through shell. Use write or edit for file changes. YOLO Auto may ask for user approval before extremely dangerous commands unless AI Guardrails are in YOLO mode.`,
       promptGuidelines: [
         ...(Array.isArray(base.promptGuidelines) ? base.promptGuidelines : []),
+        'Use bash only for read-only inspection and running checks/tests; do not create, delete, rename, copy, or edit files through shell commands.',
+        'For file changes, call write or edit. Shell file mutations via redirection/heredocs, tee, cp/mv/touch/mkdir/rm, sed -i, node/python one-liners, PowerShell content commands, git apply/checkout/reset, package installs, downloads-to-file, or archive extraction are blocked.',
         'Extremely dangerous shell commands may require user approval from YOLO Auto before execution.'
       ],
       execute: async (toolCallId, params, signal, onUpdate, ctx) => {
         const command = String(params?.command || '').trim();
         const active = runtimeRef?.current || this.active;
+        const writeDecision = shouldBlockShellWriteCommand(command, this.getSettings() || {}, {
+          cwd: active?.cwd || this.getDefaultWorkspaceRoot() || process.cwd()
+        });
+        if (writeDecision.blocked) {
+          const sessionId = active?.id || this.active?.id || '';
+          this.log('warn', 'guardrails:shell-write-blocked', {
+            sessionId,
+            source: 'AI bash tool',
+            rule: writeDecision.rule,
+            reason: writeDecision.reason,
+            command
+          });
+          this.emit({ type: 'status', message: 'Command blocked: use write/edit for file changes', sessionId });
+          throw new Error(formatShellWriteBlockedMessage(command, writeDecision));
+        }
         const approval = await this.ensureCommandApproved(active, command, 'AI bash tool');
         if (!approval.approved) {
           throw new Error(formatGuardrailBlockedMessage(command, approval.decision));
@@ -927,6 +964,7 @@ class PiSdkSessionManager {
     if (event.type === 'message_start' && event.message?.role === 'assistant') {
       active.currentAssistantText = '';
       active.currentAssistantThinkingText = '';
+      active.composingToolSummaries?.clear?.();
       return;
     }
 
@@ -946,8 +984,20 @@ class PiSdkSessionManager {
       } else if (update?.type === 'thinking_end') {
         active.currentAssistantThinkingText = messageThinking(update.partial) || update.content || active.currentAssistantThinkingText || '';
         if (active.currentAssistantThinkingText) this.emit({ type: 'assistant:thinking', content: active.currentAssistantThinkingText, sessionId });
-      } else if (update?.type === 'toolcall_start') {
-        this.emit({ type: 'status', message: 'Preparing action…', sessionId });
+      } else if (update?.type === 'toolcall_start' || update?.type === 'toolcall_delta') {
+        const composing = composingToolCall(update);
+        const message = composing ? `Composing ${toolStatusLabel(composing.name, composing.args)}…` : composingToolStatus(update);
+        if (active.statusMessage !== message) {
+          this.setRuntimeStatus(active, 'running', message);
+          this.emit({ type: 'status', message, sessionId });
+        }
+        if (composing) {
+          const summary = toolStatusLabel(composing.name, composing.args);
+          if (active.composingToolSummaries?.get(composing.id) !== summary) {
+            active.composingToolSummaries?.set(composing.id, summary);
+            this.emit({ type: 'tool:composing', id: composing.id, name: composing.name, args: composing.args, sessionId });
+          }
+        }
       }
       return;
     }
@@ -966,9 +1016,22 @@ class PiSdkSessionManager {
           this.emit({ type: 'assistant:content', content, sessionId });
         }
         if (event.message.errorMessage) {
-          this.setRuntimeStatus(active, 'error', event.message.errorMessage);
-          this.emit({ type: 'status', message: event.message.errorMessage, sessionId });
-          this.emit({ type: 'run:error', message: event.message.errorMessage, sessionId });
+          const message = event.message.errorMessage;
+          if (active.cancelRequested || isCancellationError(message)) {
+            this.setRuntimeStatus(active, 'cancelled', 'Cancelled');
+            this.emit({ type: 'status', message: 'Cancelled', sessionId });
+            return;
+          }
+          this.setRuntimeStatus(active, 'error', message);
+          this.emit({ type: 'status', message, sessionId });
+          this.emit({ type: 'run:error', message, sessionId });
+        } else {
+          const lengthMessage = outputLimitMessage(event.message);
+          if (lengthMessage) {
+            this.setRuntimeStatus(active, 'error', lengthMessage);
+            this.emit({ type: 'status', message: lengthMessage, sessionId });
+            this.emit({ type: 'run:error', message: lengthMessage, sessionId });
+          }
         }
         this.emitMetricsChanged(active);
       } else if (event.message?.role === 'user') {
@@ -999,10 +1062,14 @@ class PiSdkSessionManager {
     }
 
     if (event.type === 'tool_execution_start') {
-      active.toolCalls.set(event.toolCallId, { name: event.toolName, args: event.args || {} });
-      const readSkill = event.toolName === 'read' ? skillFromReadArgs(event.args || {}) : null;
+      const args = event.args || {};
+      active.toolCalls.set(event.toolCallId, { name: event.toolName, args });
+      const message = `Running ${toolStatusLabel(event.toolName, args)}…`;
+      this.setRuntimeStatus(active, 'running', message);
+      this.emit({ type: 'status', message, sessionId });
+      const readSkill = event.toolName === 'read' ? skillFromReadArgs(args) : null;
       if (readSkill) this.emitSkillUsed(active, { ...readSkill, source: 'read' });
-      this.emit({ type: 'tool:start', id: event.toolCallId, name: event.toolName, args: event.args || {}, sessionId });
+      this.emit({ type: 'tool:start', id: event.toolCallId, name: event.toolName, args, sessionId });
       return;
     }
 
@@ -1036,14 +1103,21 @@ class PiSdkSessionManager {
         return;
       }
 
+      const result = summarizePiToolResult(event.toolName, event.result, !event.isError);
       this.emit({
         type: 'tool:result',
         id: event.toolCallId,
         name: event.toolName,
         args,
-        result: summarizePiToolResult(event.toolName, event.result, !event.isError),
+        result,
         sessionId
       });
+      const stillRunning = [...active.toolCalls.values()].at(-1);
+      const message = stillRunning
+        ? `Running ${toolStatusLabel(stillRunning.name, stillRunning.args)}…`
+        : `${result.ok === false ? 'Action failed' : 'Finished'}: ${result.summary || toolStatusLabel(event.toolName, args)}`;
+      this.setRuntimeStatus(active, 'running', message);
+      this.emit({ type: 'status', message, sessionId });
       return;
     }
 
@@ -1539,6 +1613,20 @@ function formatGuardrailBlockedMessage(command, decision = {}) {
   ].filter((line) => line !== '').join('\n');
 }
 
+function formatShellWriteBlockedMessage(command, decision = {}) {
+  return [
+    'Shell file-write command blocked.',
+    decision.reason ? `Reason: ${decision.reason}` : '',
+    '',
+    'Use the write tool to create/overwrite files or the edit tool for exact patches. Bash is for inspection and running checks/tests only.',
+    '',
+    'Command:',
+    '```bash',
+    String(command || ''),
+    '```'
+  ].filter((line) => line !== '').join('\n');
+}
+
 function toRendererMessages(messages = []) {
   const rendered = [];
   let activeAssistant = null;
@@ -1605,6 +1693,10 @@ function toStandaloneRendererMessage(message) {
   }
   if (message.role === 'compactionSummary') return { role: 'assistant', content: `Context compacted:\n\n${message.summary || ''}` };
   if (message.role === 'branchSummary') return { role: 'assistant', content: `Branch summary:\n\n${message.summary || ''}` };
+  if (message.role === 'custom' && message.display !== false) {
+    const label = message.customType ? `${message.customType}: ` : '';
+    return { role: 'assistant', content: `${label}${messageText(message)}`.trim() };
+  }
   return null;
 }
 
@@ -1775,7 +1867,7 @@ function shouldRetryEmptyResponse(active, content) {
   if (!lastAssistant) return false;
 
   const stopReason = String(lastAssistant.stopReason || '').toLowerCase();
-  if (stopReason === 'error' || stopReason === 'aborted') return false;
+  if (stopReason === 'error' || stopReason === 'aborted' || stopReason === 'length') return false;
   if (lastAssistant.errorMessage) return false;
 
   return true;
@@ -1800,6 +1892,60 @@ function makeBranchSessionName(title) {
   const base = String(title || 'New chat').replace(/\s+/g, ' ').trim() || 'New chat';
   const name = /^branch of\b/i.test(base) ? base : `Branch of ${base}`;
   return name.length > 120 ? `${name.slice(0, 117)}…` : name;
+}
+
+function composingToolStatus(update) {
+  const tool = update?.toolCall || toolCallFromPartial(update);
+  const label = tool?.name ? toolStatusLabel(tool.name, normalizeToolArgs(tool.arguments ?? tool.args ?? tool.input)) : 'action';
+  return `Composing ${label || 'action'}…`;
+}
+
+function composingToolCall(update) {
+  const tool = update?.toolCall || toolCallFromPartial(update);
+  const id = String(tool?.id || tool?.toolCallId || update?.toolCallId || '').trim();
+  const name = String(tool?.name || tool?.toolName || '').trim();
+  if (!id || !name) return null;
+  return { id, name, args: normalizeToolArgs(tool.arguments ?? tool.args ?? tool.input) };
+}
+
+function toolCallFromPartial(update) {
+  const content = update?.partial?.content;
+  if (!Array.isArray(content)) return null;
+  const indexed = Number.isInteger(update.contentIndex) ? content[update.contentIndex] : null;
+  if (indexed?.type === 'toolCall') return indexed;
+  for (let index = content.length - 1; index >= 0; index -= 1) {
+    if (content[index]?.type === 'toolCall') return content[index];
+  }
+  return null;
+}
+
+function outputLimitMessage(message) {
+  if (String(message?.stopReason || '').toLowerCase() !== 'length') return '';
+  return messageHasToolCall(message)
+    ? 'Output limit hit while composing the action. Retry with chunked write/edit calls under 6k chars.'
+    : 'Output limit hit. Ask it to continue in smaller chunks.';
+}
+
+function messageHasToolCall(message) {
+  return Array.isArray(message?.content) && message.content.some((part) => part?.type === 'toolCall');
+}
+
+function toolStatusLabel(toolName, args = {}) {
+  const name = String(toolName || 'tool');
+  if (name === 'read') return `read ${shortStatusValue(args.path || args.file || '')}`.trim();
+  if (name === 'write' || name === 'create') return `write ${shortStatusValue(args.path || '')}`.trim();
+  if (name === 'edit') return `edit ${shortStatusValue(args.path || '')}`.trim();
+  if (name === 'bash' || name === 'exec') return `command ${shortStatusValue(args.command || '')}`.trim();
+  if (name === 'web_fetch') return `fetch ${shortStatusValue(args.url || '')}`.trim();
+  if (name === 'web_search') return `web search ${shortStatusValue(args.query || '')}`.trim();
+  if (name === 'browser') return `browser ${shortStatusValue(args.action || 'action')}`.trim();
+  return name;
+}
+
+function shortStatusValue(value, max = 80) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 function summarizePiToolResult(toolName, result, ok = true) {
@@ -2654,6 +2800,10 @@ function activeToolNamesForSettings(settings = {}) {
   return DEFAULT_AGENT_TOOL_NAMES.filter((name) => isAgentToolEnabled(name, settings));
 }
 
+function allowedToolNamesForSettings(settings = {}) {
+  return [...new Set([...activeToolNamesForSettings(settings), ...GOAL_EXTENSION_TOOL_NAMES])];
+}
+
 function isAgentToolEnabled(name, settings = {}) {
   const toolName = String(name || '').trim();
   if (!toolName) return false;
@@ -2674,6 +2824,18 @@ function getExtraSkillDirs(settings = {}) {
     .filter(Boolean);
 }
 
+function getBundledPiPackagePaths() {
+  return ['pi-goal-x', 'pi-loop-police']
+    .map((packageName) => {
+      try {
+        return path.dirname(require.resolve(`${packageName}/package.json`));
+      } catch {
+        return '';
+      }
+    })
+    .filter(Boolean);
+}
+
 const SKILL_FRONTMATTER_MISSING_OPEN_CODE = 'skill-frontmatter-missing-opening-delimiter';
 const SKILL_FRONTMATTER_MISSING_CLOSE_CODE = 'skill-frontmatter-missing-closing-delimiter';
 const MAX_SKILL_DIAGNOSTIC_FILES = 500;
@@ -2681,7 +2843,8 @@ const MAX_SKILL_DIAGNOSTIC_DEPTH = 12;
 
 function buildYoloDesktopSystemPrompt(settings = {}, cwd = '', agentDir = '') {
   const lines = [
-    'You are running inside YOLO Auto Desktop. Use the enabled Pi coding-agent tools for software work. Be production-minded: inspect before editing, prefer exact patches, run relevant checks, explain changes concisely, and ask before destructive actions. The app may require approval before extremely dangerous shell commands unless AI Guardrails are set to YOLO mode.'
+    'You are running inside YOLO Auto Desktop. Use the enabled Pi coding-agent tools for software work. Be production-minded: inspect before editing, prefer exact patches, run relevant checks, explain changes concisely, and ask before destructive actions. Never create, delete, rename, copy, or edit files through bash; use write for file creation/overwrites and edit for exact patches. Bash is for inspection and running checks/tests only, and shell file mutations such as node -e fs writes, heredocs/redirection, tee, cp/mv/touch/mkdir/rm, sed -i, python -c writes, PowerShell content commands, git apply/checkout/reset, package installs, downloads-to-file, or archive extraction are blocked. The app may require approval before extremely dangerous shell commands unless AI Guardrails are set to YOLO mode.',
+    'Keep file-changing tool calls small for capped-output servers. If creating or replacing more than about 6k characters, do not send it in one write call; write a tiny skeleton with a unique marker, then use repeated edit calls replacing that marker with the next chunk plus the marker, and remove the marker at the end.'
   ];
 
   const skillDirs = getSkillDirectorySummaries(settings, cwd, agentDir);

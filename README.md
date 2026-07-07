@@ -87,7 +87,7 @@ Additional Pi skills can be added through Pi-style settings/resources under the 
 - OpenAI-compatible provider registration through the Pi model registry
 - Default thinking level in Settings plus per-chat thinking level override
 - Lightweight model compatibility presets for OpenAI-compatible vs local/basic endpoints
-- Local command shorthands: `!cmd`, `!!cmd`, `/compact`, `/session`, and `/tools`
+- Local command shorthands: `!cmd`, `!!cmd`, `/compact`, `/session`, `/tools`, bundled `pi-loop-police` loop detection via `/loop-police`, and Pi goal commands from `pi-goal-x` (`/goals`, `/goals-set`, `/sisyphus`, `/goal-status`, etc.; `/goal-set` aliases to `/goals-set`)
 - Multiple sessions can run at once; Settings → Max concurrent sessions defaults to 2 and is enforced only when pressing Send
 - If Send would exceed max concurrency, YOLO Auto shows the blocking sessions with options to terminate one and send, or cancel and wait
 - While a session works: Enter steers, Alt+Enter queues a follow-up, Esc/Cancel or typing `/stop` stops that session

@@ -8,9 +8,13 @@
     "ensure-electron": "node scripts/ensure-electron.js",
     "icons": "node scripts/generate-icons.js",
     "check:syntax": "node scripts/check-js-syntax.js",
-    "test": "npm run ensure-electron && npm run test:tool-calls && npm run test:web-safety && npm run test:electron-browser",
+    "test": "npm run ensure-electron && npm run test:command-guardrails && npm run test:tool-calls && npm run test:web-safety && npm run test:goals && npm run test:loop-police && npm run test:session-events && npm run test:electron-browser",
+    "test:command-guardrails": "node scripts/command-guardrails-regression.js",
     "test:tool-calls": "node scripts/tool-call-regression.js",
     "test:web-safety": "node scripts/web-research-sanitizer-regression.js",
+    "test:goals": "node scripts/goal-extension-regression.js",
+    "test:loop-police": "node scripts/loop-police-regression.js",
+    "test:session-events": "node scripts/session-event-regression.js",
     "test:electron-browser": "npm run ensure-electron && node scripts/electron-browser-guard-regression.js",
     "check": "npm run check:syntax && npm test",
     "dist:dir": "npm run icons && electron-builder --config electron-builder.config.cjs --dir",
@@ -29,6 +33,8 @@
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.3",
     "electron-updater": "^6.8.9",
+    "pi-goal-x": "0.19.0",
+    "pi-loop-police": "^1.4.1",
     "typebox": "^1.1.38"
   },
   "productName": "YOLO Auto Desktop",
